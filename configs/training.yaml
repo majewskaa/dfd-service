@@ -1,38 +1,51 @@
 data:
-  train_dir: "data/processed/train"
-  val_dir: "data/processed/val"
-  batch_size: 32
-  num_workers: 4
+  # Paths to shard datasets
+  shards_dir: "data/processed/FakeAVCeleb_v1.2/shards"
+  train_index: "index_train.csv"
+  val_index: "index_val.csv"
+  
+  # Data loading configuration
+  num_workers: 0  # Number of data loading workers (0 for IterableDataset)
   pin_memory: true
+  
+  # Optional: limit samples for debugging
+  max_train_samples: null  # Set to integer to limit training samples
+  max_val_samples: null    # Set to integer to limit validation samples
 
 model:
-  name: "efficientnet_b0"  # Options: "efficientnet_b0", "resnet50", "custom"
-  pretrained: true
+  # Model type - can be extended to support any BaseDetector subclass
+  name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", or any other detector in src/models
+  module_path: "src.models.xception"  # Python import path to model module
   num_classes: 2
-  dropout_rate: 0.2
+  
+  # Model-specific parameters (passed to __init__ as kwargs)
+  model_params: {}
 
 training:
-  epochs: 100
+  epochs: 50
+  grad_clip: 1.0  # Gradient clipping (0 to disable)
+  
   early_stopping:
     patience: 10
     min_delta: 0.001
+  
   optimizer:
-    name: "adam"  # Options: "adam", "sgd"
-    learning_rate: 0.001
+    name: "adam"  # Options: "adam", "sgd", "adamw"
+    learning_rate: 0.0001
     weight_decay: 0.0001
     momentum: 0.9  # For SGD
+  
   scheduler:
-    name: "cosine"  # Options: "cosine", "step", "plateau"
-    warmup_epochs: 5
-    min_lr: 0.00001
+    name: "cosine"  # Options: "cosine", "step", "plateau", "none"
+    warmup_epochs: 0
+    min_lr: 0.000001
 
 loss:
   name: "cross_entropy"  # Options: "cross_entropy", "focal"
-  focal_gamma: 2.0  # For focal loss
+  focal_gamma: 2.0  # For focal loss (if used)
 
 logging:
   log_dir: "logs"
-  tensorboard: true
   save_frequency: 5  # Save checkpoint every N epochs
   metrics:
     - "accuracy"
@@ -43,6 +56,12 @@ logging:
 
 checkpointing:
   dir: "checkpoints"
-  save_best_only: true
-  monitor: "val_f1_score"
-  mode: "max" 
+  save_best_only: false  # If false, saves checkpoints every save_frequency epochs
+  monitor: "f1_score"  # Metric to monitor for best model (without "val_" prefix)
+  mode: "max"  # "max" or "min"
+
+# Device configuration
+device: "cuda"  # Options: "cuda", "cpu", "cuda:0", "cuda:1", etc.
+
+# Seed for reproducibility
+seed: 42 

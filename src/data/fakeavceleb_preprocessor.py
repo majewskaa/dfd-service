@@ -1,6 +1,5 @@
-import json
 import os
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, Tuple
 
 import pandas as pd
 from tqdm import tqdm
@@ -102,9 +101,9 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
             'race_distribution': {}
         }
 
-        # Initialize output format specific storage
-        output_format = self.config["output"]["format"]
-        self._initialize_output_storage(output_dir, output_format)
+        # Initialize shards-only storage
+        self.sample_index = 0
+        self._initialize_output_storage(output_dir)
 
         # Process each category
         for category in ['A', 'B', 'C', 'D']:
@@ -121,6 +120,10 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
                     if file.endswith('.mp4'):
                         video_files.append(os.path.join(root, file))
 
+            # TODO: REMOVE THIS
+            # Limit to first 100 videos per category for testing
+            video_files = video_files[:100]
+            
             # Process each video in the category with progress bar
             for video_path in tqdm(video_files, desc=f"Category {category}", unit="video"):
                 try:
@@ -132,115 +135,21 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
                     if result is not None:
                         # Add metadata to result
                         result['metadata'].update(metadata)
-                        
+
                         # Save result incrementally
-                        self._save_incremental(result, output_dir, output_format)
-                        
+                        self._save_incremental(result, output_dir)
+
                         # Update statistics
                         self._update_statistics(stats, result['metadata'])
                         stats['total_samples'] += 1
 
                 except Exception as e:
+                    # Log and continue with next video
                     print(f"\nError processing {video_path}: {str(e)}")
                     continue
 
-        # Finalize output storage
-        self._finalize_output_storage(output_dir, output_format)
-
-        # Save dataset statistics
-        self._save_dataset_statistics(stats, output_dir)
-
-    def _initialize_output_storage(self, output_dir: str, output_format: str):
-        """Initialize storage for the specified output format.
-        
-        Args:
-            output_dir: Directory to save processed data
-            output_format: Format to save data in
-        """
-        if output_format == "hdf5":
-            import h5py
-            self.h5_file = h5py.File(os.path.join(output_dir, 'processed_data.h5'), 'w')
-            self.h5_index = 0
-        elif output_format == "numpy":
-            self.numpy_data = []
-            self.numpy_index = 0
-        elif output_format == "torch":
-            import torch
-            self.torch_data = []
-            self.torch_index = 0
-        else:
-            raise ValueError(f"Unsupported output format: {output_format}")
-
-    def _save_incremental(self, result: Dict[str, Any], output_dir: str, output_format: str):
-        """Save a single result incrementally.
-        
-        Args:
-            result: Processed data sample
-            output_dir: Directory to save processed data
-            output_format: Format to save data in
-        """
-        if output_format == "hdf5":
-            # Save data to HDF5 file
-            group = self.h5_file.create_group(f'sample_{self.h5_index}')
-            for key, value in result.items():
-                if key == 'metadata':
-                    # Convert metadata to string for HDF5 storage
-                    group.create_dataset(key, data=json.dumps(value))
-                else:
-                    group.create_dataset(key, data=value)
-            self.h5_index += 1
-
-        elif output_format == "numpy":
-            # Store in memory temporarily (will be saved in batches)
-            self.numpy_data.append(result)
-            if len(self.numpy_data) >= self.config["output"]["batch_size"]:
-                self._save_numpy_batch(output_dir)
-
-        elif output_format == "torch":
-            # Store in memory temporarily (will be saved in batches)
-            self.torch_data.append(result)
-            if len(self.torch_data) >= self.config["output"]["batch_size"]:
-                self._save_torch_batch(output_dir)
-
-    def _finalize_output_storage(self, output_dir: str, output_format: str):
-        """Finalize storage and save any remaining data.
-        
-        Args:
-            output_dir: Directory to save processed data
-            output_format: Format to save data in
-        """
-        if output_format == "hdf5":
-            self.h5_file.close()
-        elif output_format == "numpy":
-            if self.numpy_data:  # Save any remaining data
-                self._save_numpy_batch(output_dir)
-        elif output_format == "torch":
-            if self.torch_data:  # Save any remaining data
-                self._save_torch_batch(output_dir)
-
-    def _save_numpy_batch(self, output_dir: str):
-        """Save a batch of numpy data.
-        
-        Args:
-            output_dir: Directory to save processed data
-        """
-        import numpy as np
-        batch_file = os.path.join(output_dir, f'batch_{self.numpy_index}.npz')
-        np.savez(batch_file, *self.numpy_data)
-        self.numpy_data = []
-        self.numpy_index += 1
-
-    def _save_torch_batch(self, output_dir: str):
-        """Save a batch of torch data.
-        
-        Args:
-            output_dir: Directory to save processed data
-        """
-        import torch
-        batch_file = os.path.join(output_dir, f'batch_{self.torch_index}.pt')
-        torch.save(self.torch_data, batch_file)
-        self.torch_data = []
-        self.torch_index += 1
+        self._finalize_output_storage(output_dir)
+        self.save_dataset_statistics(stats, output_dir)
 
     def _update_statistics(self, stats: Dict[str, Any], metadata: Dict[str, Any]):
         """Update statistics with metadata from a processed sample.
@@ -264,14 +173,3 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
         # Update race statistics
         race = metadata['race']
         stats['race_distribution'][race] = stats['race_distribution'].get(race, 0) + 1
-
-    def _save_dataset_statistics(self, stats: Dict[str, Any], output_dir: str):
-        """Save dataset statistics.
-        
-        Args:
-            stats: Statistics dictionary
-            output_dir: Directory to save statistics
-        """
-        stats_path = os.path.join(output_dir, 'dataset_statistics.json')
-        with open(stats_path, 'w') as f:
-            json.dump(stats, f, indent=2)

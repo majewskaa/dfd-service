@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import os
 import torch
 import torch.nn as nn
@@ -10,9 +10,12 @@ import numpy as np
 from pathlib import Path
 import json
 from datetime import datetime
+from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+import torchvision.transforms as transforms
+
 
 class Trainer:
-    """Class for training deepfake detection models."""
+    """Universal trainer for multi-modal deepfake detection models (BaseDetector subclasses)."""
     
     def __init__(
         self,
@@ -25,7 +28,7 @@ class Trainer:
         """Initialize the trainer.
         
         Args:
-            model: Model to train
+            model: Model to train (must inherit from BaseDetector)
             train_loader: Training data loader
             val_loader: Validation data loader
             config: Training configuration
@@ -46,17 +49,21 @@ class Trainer:
         # Initialize loss function
         self.criterion = self._create_criterion()
         
-        # Initialize metrics
-        self.metrics = self._initialize_metrics()
-        
         # Create checkpoint directory
         self.checkpoint_dir = Path(config["checkpointing"]["dir"])
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create logging directory
+        self.log_dir = Path(config["logging"]["log_dir"])
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize training state
         self.current_epoch = 0
         self.best_metric = float("-inf") if config["checkpointing"]["mode"] == "max" else float("inf")
         self.early_stopping_counter = 0
+        
+        # Initialize training history
+        self.history = {"train": [], "val": []}
         
     def _create_optimizer(self) -> Optimizer:
         """Create optimizer based on configuration."""
@@ -113,9 +120,33 @@ class Trainer:
         else:
             raise ValueError(f"Unsupported loss function: {loss_config['name']}")
     
-    def _initialize_metrics(self) -> Dict[str, float]:
-        """Initialize metrics dictionary."""
-        return {metric: 0.0 for metric in self.config["logging"]["metrics"]}
+    def _prepare_batch(self, sample: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Prepare batch data for multi-modal model.
+        
+        Args:
+            sample: Sample dictionary containing 'data' (video frames), 'audio_mel_frames', and 'label'
+            
+        Returns:
+            Tuple of (image_input, audio_input, labels)
+        """
+        # Extract video frames (T, H, W, 3) -> (1, T, 3, H, W)
+        video_frames = sample["data"]  # Already a tensor from ShardClipDataset
+        if video_frames.dim() == 4:  # (T, H, W, 3)
+            video_frames = video_frames.permute(0, 3, 1, 2)  # (T, 3, H, W)
+            video_frames = video_frames.unsqueeze(0)  # (1, T, 3, H, W)
+        
+        # Normalize video frames to [0, 1]
+        video_frames = video_frames.float() / 255.0
+        
+        # Extract audio mel spectrogram (T, n_mels, mel_frames) -> (1, T, 1, n_mels, mel_frames)
+        audio_mel = sample["audio_mel_frames"]  # (T, n_mels, mel_frames)
+        if audio_mel.dim() == 3:
+            audio_mel = audio_mel.unsqueeze(0).unsqueeze(2)  # (1, T, 1, n_mels, mel_frames)
+        
+        # Extract label
+        label = torch.tensor([sample["label"]], dtype=torch.long)
+        
+        return video_frames.to(self.device), audio_mel.to(self.device), label.to(self.device)
     
     def train_epoch(self) -> Dict[str, float]:
         """Train for one epoch.
@@ -124,37 +155,61 @@ class Trainer:
             Dictionary containing training metrics
         """
         self.model.train()
-        epoch_metrics = self._initialize_metrics()
         
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch + 1}")
-        for batch_idx, (data, target) in enumerate(pbar):
-            data, target = data.to(self.device), target.to(self.device)
+        all_preds = []
+        all_targets = []
+        all_probs = []
+        total_loss = 0.0
+        num_batches = 0
+        
+        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch + 1} [Train]")
+        for sample in pbar:
+            # Prepare batch data
+            image_input, audio_input, target = self._prepare_batch(sample)
             
             # Forward pass
             self.optimizer.zero_grad()
-            output = self.model(data)
-            loss = self.criterion(output, target)
+            output = self.model(image_input, audio_input)
+            loss = self.criterion(output, target.squeeze())
             
             # Backward pass
             loss.backward()
+            
+            # Gradient clipping (optional, helps with stability)
+            if self.config["training"].get("grad_clip", 0) > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["training"]["grad_clip"])
+            
             self.optimizer.step()
             
-            # Update metrics
+            # Collect predictions and targets for metrics
             with torch.no_grad():
+                probs = torch.softmax(output, dim=1)
                 pred = output.argmax(dim=1)
-                self._update_metrics(epoch_metrics, pred, target)
-            
-            # Update progress bar
-            pbar.set_postfix({
-                "loss": f"{loss.item():.4f}",
-                "acc": f"{epoch_metrics['accuracy']:.4f}"
-            })
+                
+                all_preds.append(pred.cpu())
+                all_targets.append(target.squeeze().cpu())
+                all_probs.append(probs.cpu())
+                
+                total_loss += loss.item()
+                num_batches += 1
+                
+                # Update progress bar
+                current_acc = (pred == target.squeeze()).float().mean().item()
+                pbar.set_postfix({
+                    "loss": f"{loss.item():.4f}",
+                    "acc": f"{current_acc:.4f}"
+                })
         
-        # Average metrics
-        for metric in epoch_metrics:
-            epoch_metrics[metric] /= len(self.train_loader)
+        # Concatenate all predictions and targets
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+        all_probs = torch.cat(all_probs)
         
-        return epoch_metrics
+        # Calculate metrics
+        metrics = self._calculate_metrics(all_preds, all_targets, all_probs)
+        metrics["loss"] = total_loss / num_batches
+        
+        return metrics
     
     def validate(self) -> Dict[str, float]:
         """Validate the model.
@@ -163,45 +218,87 @@ class Trainer:
             Dictionary containing validation metrics
         """
         self.model.eval()
-        val_metrics = self._initialize_metrics()
+        
+        all_preds = []
+        all_targets = []
+        all_probs = []
+        total_loss = 0.0
+        num_batches = 0
         
         with torch.no_grad():
-            for data, target in tqdm(self.val_loader, desc="Validation"):
-                data, target = data.to(self.device), target.to(self.device)
-                output = self.model(data)
+            pbar = tqdm(self.val_loader, desc=f"Epoch {self.current_epoch + 1} [Val]")
+            for sample in pbar:
+                # Prepare batch data
+                image_input, audio_input, target = self._prepare_batch(sample)
+                
+                # Forward pass
+                output = self.model(image_input, audio_input)
+                loss = self.criterion(output, target.squeeze())
+                
+                # Collect predictions
+                probs = torch.softmax(output, dim=1)
                 pred = output.argmax(dim=1)
-                self._update_metrics(val_metrics, pred, target)
+                
+                all_preds.append(pred.cpu())
+                all_targets.append(target.squeeze().cpu())
+                all_probs.append(probs.cpu())
+                
+                total_loss += loss.item()
+                num_batches += 1
+                
+                # Update progress bar
+                current_acc = (pred == target.squeeze()).float().mean().item()
+                pbar.set_postfix({
+                    "loss": f"{loss.item():.4f}",
+                    "acc": f"{current_acc:.4f}"
+                })
         
-        # Average metrics
-        for metric in val_metrics:
-            val_metrics[metric] /= len(self.val_loader)
+        # Concatenate all predictions and targets
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+        all_probs = torch.cat(all_probs)
         
-        return val_metrics
+        # Calculate metrics
+        metrics = self._calculate_metrics(all_preds, all_targets, all_probs)
+        metrics["loss"] = total_loss / num_batches
+        
+        return metrics
     
-    def _update_metrics(self, metrics: Dict[str, float], pred: torch.Tensor, target: torch.Tensor):
-        """Update metrics with current batch predictions.
+    def _calculate_metrics(self, preds: torch.Tensor, targets: torch.Tensor, probs: torch.Tensor) -> Dict[str, float]:
+        """Calculate evaluation metrics.
         
         Args:
-            metrics: Dictionary of metrics to update
-            pred: Predicted labels
-            target: Ground truth labels
+            preds: Predicted labels
+            targets: Ground truth labels
+            probs: Predicted probabilities
+            
+        Returns:
+            Dictionary of metrics
         """
-        # Convert to numpy for metric calculation
-        pred_np = pred.cpu().numpy()
-        target_np = target.cpu().numpy()
+        preds_np = preds.numpy()
+        targets_np = targets.numpy()
+        probs_np = probs.numpy()
         
-        # Update each metric
-        for metric in metrics:
-            if metric == "accuracy":
-                metrics[metric] += (pred_np == target_np).mean()
-            elif metric == "precision":
-                metrics[metric] += precision_score(target_np, pred_np, average="binary")
-            elif metric == "recall":
-                metrics[metric] += recall_score(target_np, pred_np, average="binary")
-            elif metric == "f1_score":
-                metrics[metric] += f1_score(target_np, pred_np, average="binary")
-            elif metric == "auc_roc":
-                metrics[metric] += roc_auc_score(target_np, pred_np)
+        metrics = {}
+        
+        # Calculate metrics from config
+        for metric_name in self.config["logging"]["metrics"]:
+            if metric_name == "accuracy":
+                metrics[metric_name] = (preds_np == targets_np).mean()
+            elif metric_name == "precision":
+                metrics[metric_name] = precision_score(targets_np, preds_np, average="binary", zero_division=0)
+            elif metric_name == "recall":
+                metrics[metric_name] = recall_score(targets_np, preds_np, average="binary", zero_division=0)
+            elif metric_name == "f1_score":
+                metrics[metric_name] = f1_score(targets_np, preds_np, average="binary", zero_division=0)
+            elif metric_name == "auc_roc":
+                # Need probability of positive class
+                try:
+                    metrics[metric_name] = roc_auc_score(targets_np, probs_np[:, 1])
+                except:
+                    metrics[metric_name] = 0.0
+        
+        return metrics
     
     def train(self):
         """Train the model."""
@@ -240,23 +337,28 @@ class Trainer:
             val_metrics: Validation metrics
         """
         # Log to console
-        print(f"\nEpoch {self.current_epoch + 1}:")
+        print(f"\n{'='*70}")
+        print(f"Epoch {self.current_epoch + 1}/{self.config['training']['epochs']}")
+        print(f"{'='*70}")
         print("Training metrics:")
         for metric, value in train_metrics.items():
-            print(f"  {metric}: {value:.4f}")
-        print("Validation metrics:")
+            print(f"  {metric:12s}: {value:.4f}")
+        print("\nValidation metrics:")
         for metric, value in val_metrics.items():
-            print(f"  {metric}: {value:.4f}")
+            print(f"  {metric:12s}: {value:.4f}")
+        print(f"{'='*70}\n")
+        
+        # Store in history
+        self.history["train"].append(train_metrics)
+        self.history["val"].append(val_metrics)
         
         # Log to file
-        log_dir = Path(self.config["logging"]["log_dir"])
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        log_file = log_dir / "training_log.json"
+        log_file = self.log_dir / "training_log.json"
         log_data = {
             "epoch": self.current_epoch + 1,
             "train_metrics": train_metrics,
             "val_metrics": val_metrics,
+            "learning_rate": self.optimizer.param_groups[0]["lr"],
             "timestamp": datetime.now().isoformat()
         }
         
@@ -270,6 +372,11 @@ class Trainer:
         
         with open(log_file, "w") as f:
             json.dump(logs, f, indent=2)
+        
+        # Save history
+        history_file = self.log_dir / "training_history.json"
+        with open(history_file, "w") as f:
+            json.dump(self.history, f, indent=2)
     
     def _save_checkpoint(self, val_metrics: Dict[str, float]):
         """Save model checkpoint.
@@ -277,7 +384,9 @@ class Trainer:
         Args:
             val_metrics: Validation metrics
         """
-        current_metric = val_metrics[self.config["checkpointing"]["monitor"]]
+        monitor_metric = self.config["checkpointing"]["monitor"]
+        current_metric = val_metrics.get(monitor_metric, val_metrics.get("accuracy", 0.0))
+        
         is_best = (
             current_metric > self.best_metric
             if self.config["checkpointing"]["mode"] == "max"
@@ -296,8 +405,10 @@ class Trainer:
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
                 "best_metric": self.best_metric,
+                "val_metrics": val_metrics,
                 "config": self.config
             }, checkpoint_path)
+            print(f"✓ Saved best model (epoch {self.current_epoch + 1}, {monitor_metric}={current_metric:.4f})")
         else:
             self.early_stopping_counter += 1
         
@@ -313,8 +424,10 @@ class Trainer:
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
                 "best_metric": self.best_metric,
+                "val_metrics": val_metrics,
                 "config": self.config
             }, checkpoint_path)
+            print(f"✓ Saved checkpoint at epoch {self.current_epoch + 1}")
     
     def _should_stop_early(self, val_metrics: Dict[str, float]) -> bool:
         """Check if training should be stopped early.
