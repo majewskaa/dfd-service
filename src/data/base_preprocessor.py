@@ -96,7 +96,8 @@ class DataPreprocessor(ABC):
             clip_len: int,
             fps: float,
             mel_per_second: float,
-            overlap_ratio: float = 0.5
+            overlap_ratio: float = 0.5,
+            target_mel_size: Tuple[int, int] = (299, 299)
     ) -> np.ndarray:
         """Extract mel spectrograms for each frame in the clip with overlap for continuity.
 
@@ -107,54 +108,73 @@ class DataPreprocessor(ABC):
             fps: Frames per second of the video
             mel_per_second: Mel frames per second
             overlap_ratio: Ratio of overlap between consecutive mel spectrograms (0.0-1.0)
+            target_mel_size: Target size for resizing mel spectrograms (height, width)
 
         Returns:
-            Frame-level mel spectrograms [clip_len, n_mels, mel_frames_per_frame_with_overlap]
+            Frame-level mel spectrograms [clip_len, target_height, target_width]
         """
-        n_mels = audio_mel_full.shape[0]
-        mel_frames_per_frame = max(1, int(round(mel_per_second / fps)))
+        # Calculate how many mel frames correspond to one video frame
+        mel_frames_per_video_frame = max(1, int(round(mel_per_second / fps)))
         
         # Calculate overlap in mel frames
-        overlap_frames = int(round(mel_frames_per_frame * overlap_ratio))
-        overlap_frames = max(0, min(overlap_frames, mel_frames_per_frame - 1))
+        overlap = int(round(mel_frames_per_video_frame * overlap_ratio))
+        overlap = max(0, min(overlap, mel_frames_per_video_frame - 1))
         
-        # Calculate the total size including overlap (previous + current + next)
-        mel_frames_per_frame_with_overlap = mel_frames_per_frame + 2 * overlap_frames
+        # Total mel frames needed per video frame (including overlap)
+        total_mel_frames = mel_frames_per_video_frame + 2 * overlap
 
-        # Initialize output array for frame-level mel spectrograms with overlap
-        mel_frames = np.zeros((clip_len, n_mels, mel_frames_per_frame_with_overlap), dtype=np.float16)
+        # Initialize output array
+        target_h, target_w = target_mel_size
+        result = np.zeros((clip_len, target_h, target_w), dtype=np.float16)
 
-        for i in range(clip_len):
-            frame_idx = start_frame + i
+        for frame_idx in range(clip_len):
             # Calculate time for this frame
-            frame_time = frame_idx / fps
-            # Map to mel spectrogram indices
-            mel_start = int(np.floor(frame_time * mel_per_second))
+            video_frame_idx = start_frame + frame_idx
+            time_seconds = video_frame_idx / fps
             
-            # Add overlap by extending the window backwards and forwards
-            mel_start_with_overlap = mel_start - overlap_frames
-            mel_end_with_overlap = mel_start + mel_frames_per_frame + overlap_frames
+            # Find corresponding mel frame indices
+            mel_center = int(np.floor(time_seconds * mel_per_second))
+            mel_start = mel_center - overlap
+            mel_end = mel_center + mel_frames_per_video_frame + overlap
 
-            # Ensure bounds
-            mel_start_with_overlap = max(0, mel_start_with_overlap)
-            mel_end_with_overlap = min(audio_mel_full.shape[1], mel_end_with_overlap)
+            # Clamp to valid range
+            mel_start = max(0, mel_start)
+            mel_end = min(audio_mel_full.shape[1], mel_end)
 
-            if mel_end_with_overlap > mel_start_with_overlap:
-                # Extract mel spectrogram for this frame with overlap
-                mel_frame = audio_mel_full[:, mel_start_with_overlap:mel_end_with_overlap]
+            if mel_end > mel_start:
+                # Extract mel spectrogram slice
+                mel_slice = audio_mel_full[:, mel_start:mel_end]
                 
-                # Pad or truncate to ensure consistent shape
-                if mel_frame.shape[1] < mel_frames_per_frame_with_overlap:
+                # Ensure consistent width by padding or truncating
+                if mel_slice.shape[1] < total_mel_frames:
                     # Pad with zeros
-                    pad_width = mel_frames_per_frame_with_overlap - mel_frame.shape[1]
-                    mel_frame = np.pad(mel_frame, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
-                elif mel_frame.shape[1] > mel_frames_per_frame_with_overlap:
+                    pad_width = total_mel_frames - mel_slice.shape[1]
+                    mel_slice = np.pad(mel_slice, ((0, 0), (0, pad_width)), mode='constant')
+                elif mel_slice.shape[1] > total_mel_frames:
                     # Truncate
-                    mel_frame = mel_frame[:, :mel_frames_per_frame_with_overlap]
+                    mel_slice = mel_slice[:, :total_mel_frames]
 
-                mel_frames[i] = mel_frame.astype(np.float16)
+                # Resize to target size
+                result[frame_idx] = DataPreprocessor._resize_mel_spectrogram(mel_slice, target_h, target_w)
 
-        return mel_frames
+        return result
+
+    @staticmethod
+    def _resize_mel_spectrogram(mel_data: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        """Resize mel spectrogram to target dimensions while preserving data range."""
+        mel_min = mel_data.min()
+        mel_max = mel_data.max()
+        mel_range = mel_max - mel_min
+        
+        if mel_range > 1e-8:  # Has variation
+            # Normalize to [0, 255], resize, then restore original scale
+            mel_uint8 = ((mel_data - mel_min) / mel_range * 255).astype(np.uint8)
+            mel_resized = cv2.resize(mel_uint8, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            mel_resized = mel_resized.astype(np.float32) / 255.0 * mel_range + mel_min
+        else:  # Constant values
+            mel_resized = np.full((target_h, target_w), mel_min, dtype=np.float32)
+        
+        return mel_resized.astype(np.float16)
 
     @staticmethod
     def save_dataset_statistics(stats: Dict[str, Any], output_dir: str):
@@ -339,8 +359,9 @@ class DataPreprocessor(ABC):
             # Extract frame-level mel spectrograms
             mel_frames: np.ndarray | None = None
             if audio_mel_full is not None and mel_per_second > 0 and fps > 0:
+                target_mel_size = tuple(audio_cfg.get("target_mel_size", [299, 299]))
                 mel_frames = self.extract_frame_level_mel(
-                    audio_mel_full, start, clip_len, fps, mel_per_second, overlap_ratio
+                    audio_mel_full, start, clip_len, fps, mel_per_second, overlap_ratio, target_mel_size
                 )
 
             self.shard_writer.add_sample(sample_id, clip, label, meta, mel_frames=mel_frames)

@@ -1,9 +1,10 @@
-from abc import ABC, abstractmethod
-import torch
-import torch.nn as nn
-import timm
 from typing import Tuple, Optional
+
+import timm
+import torch
+
 from src.models.base import BaseDetector
+
 
 class XceptionMaxFusionDetector(BaseDetector):
     """
@@ -11,12 +12,13 @@ class XceptionMaxFusionDetector(BaseDetector):
     modalities, with a late fusion strategy based on taking the maximum of their
     individual predicted logits.
     """
+
     def __init__(self, num_classes: int = 2):
         super().__init__(num_classes)
-        
+
         # --- Video Predictor (Xception from timm) ---
         self.video_model = timm.create_model('xception', pretrained=True, num_classes=num_classes)
-        
+
         # --- Audio Predictor (Xception from timm) ---
         self.audio_model = timm.create_model('xception', pretrained=True, num_classes=num_classes, in_chans=1)
 
@@ -39,12 +41,12 @@ class XceptionMaxFusionDetector(BaseDetector):
         _, _, C_a, _, _ = audio_input.shape  # just for clarity
 
         # Reshape: process all frames at once
-        video_reshaped = image_input.view(B * T, C_v, H, W)   # (B*T, 3, H, W)
-        audio_reshaped = audio_input.view(B * T, C_a, H, W)   # (B*T, 1, H, W)
+        video_reshaped = image_input.view(B * T, C_v, H, W)  # (B*T, 3, H, W)
+        audio_reshaped = audio_input.view(B * T, C_a, H, W)  # (B*T, 1, H, W)
 
         # Forward through backbones
-        video_logits = self.video_model(video_reshaped)   # (B*T, num_classes)
-        audio_logits = self.audio_model(audio_reshaped)   # (B*T, num_classes)
+        video_logits = self.video_model(video_reshaped)  # (B*T, num_classes)
+        audio_logits = self.audio_model(audio_reshaped)  # (B*T, num_classes)
 
         # Late fusion (elementwise max across modalities)
         fused_logits = torch.max(video_logits, audio_logits)  # (B*T, num_classes)
@@ -71,8 +73,7 @@ class XceptionMaxFusionDetector(BaseDetector):
             probabilities = torch.softmax(self.forward(image_input, audio_input), dim=1)
             predictions = torch.argmax(probabilities, dim=1)
             return predictions
-    
-    
+
     def get_confidence(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> torch.Tensor:
         """Get prediction confidence scores."""
         self.eval()
@@ -81,8 +82,9 @@ class XceptionMaxFusionDetector(BaseDetector):
             probabilities = torch.softmax(logits, dim=1)
             confidence_scores = torch.max(probabilities, dim=1)[0]
             return confidence_scores
-    
-    def get_modality_features(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    def get_modality_features(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> Tuple[
+        torch.Tensor, torch.Tensor]:
         """Extract features from both modalities."""
         video_features = self.get_video_features(image_input)
         audio_features = self.get_audio_features(audio_input)
@@ -92,48 +94,48 @@ class XceptionMaxFusionDetector(BaseDetector):
         """Extract video features using Xception backbone."""
         if image_input.ndim != 5:
             raise ValueError("Input must be a video sequence with shape (B, T, C, H, W)")
-        
+
         B, T, C, H, W = image_input.shape
         video_reshaped = image_input.view(B * T, C, H, W)
-        
+
         features = self.video_model.forward_features(video_reshaped)
-        
+
         if features.dim() == 4:
             features = features.mean(dim=[-2, -1])
-        
+
         features = features.view(B, T, -1)
         final_features = features.mean(dim=1)
-        
+
         return final_features
 
     def get_audio_features(self, audio_input: torch.Tensor) -> torch.Tensor:
         """Extract audio features using Xception backbone."""
         if audio_input.ndim != 5:
             raise ValueError("Input must be an audio sequence with shape (B, T, C, H, W)")
-        
+
         B, T, C, H, W = audio_input.shape
         audio_reshaped = audio_input.view(B * T, C, H, W)
-        
+
         features = self.audio_model.forward_features(audio_reshaped)
-        
+
         if features.dim() == 4:
             features = features.mean(dim=[-2, -1])
-        
+
         features = features.view(B, T, -1)
         final_features = features.mean(dim=1)
-        
+
         return final_features
 
-    def predict_single_modality(self, image_input: Optional[torch.Tensor] = None, 
+    def predict_single_modality(self, image_input: Optional[torch.Tensor] = None,
                                 audio_input: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Get predictions using only one modality."""
-        
+
         if image_input is not None and audio_input is not None:
             raise ValueError("Only one modality can be provided at a time")
-        
+
         if image_input is None and audio_input is None:
             raise ValueError("At least one modality must be provided")
-        
+
         self.eval()
         with torch.no_grad():
             if image_input is not None:

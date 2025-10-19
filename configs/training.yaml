@@ -5,6 +5,7 @@ data:
   val_index: "index_val.csv"
   
   # Data loading configuration
+  batch_size: 16  # Mini-batch size for training
   num_workers: 0  # Number of data loading workers (0 for IterableDataset)
   pin_memory: true
   

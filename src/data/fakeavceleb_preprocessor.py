@@ -122,7 +122,7 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
 
             # TODO: REMOVE THIS
             # Limit to first 100 videos per category for testing
-            video_files = video_files[:100]
+            video_files = video_files[:10]
             
             # Process each video in the category with progress bar
             for video_path in tqdm(video_files, desc=f"Category {category}", unit="video"):

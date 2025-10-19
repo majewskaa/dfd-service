@@ -21,7 +21,7 @@ def _decode_image(buf: bytes) -> np.ndarray:
 class ShardClipDataset(IterableDataset):
     """Streams tar shards of samples (directories) with frames and meta.json.
 
-    Each yielded item is a dict: {"data": Tensor[T,H,W,3], "label": int, "metadata": dict, "audio_mel_frames": Tensor[T,n_mels,mel_frames_per_frame]}
+    Each yielded item is a dict: {"data": Tensor[batch_size,T,H,W,3], "label": Tensor[batch_size], "metadata": List[dict], "audio_mel_frames": Tensor[batch_size,T,n_mels,mel_frames_per_frame]}
     The audio_mel_frames key is only present if audio processing was enabled during preprocessing.
     Normalization can be applied downstream using existing LMDBDataTransform if desired.
     """
@@ -32,12 +32,14 @@ class ShardClipDataset(IterableDataset):
             index_filename: str = "index.csv",
             target_device: str = "cpu",
             max_samples: Optional[int] = None,
+            batch_size: int = 1,
     ):
         super().__init__()
         self.shards_dir = shards_dir
         self.index_path = os.path.join(shards_dir, index_filename)
         self.target_device = target_device
         self.max_samples = max_samples
+        self.batch_size = batch_size
 
         if not os.path.exists(self.index_path):
             raise FileNotFoundError(f"Index not found: {self.index_path}")
@@ -46,7 +48,7 @@ class ShardClipDataset(IterableDataset):
         self._entries = self._load_index(self.index_path)
 
     def __iter__(self):
-        return self._iter_samples()
+        return self._iter_batches()
 
     @staticmethod
     def _load_index(path: str) -> List[Tuple[str, str, str, int, int, str]]:
@@ -122,6 +124,44 @@ class ShardClipDataset(IterableDataset):
             sample["audio_mel_frames"] = mel_frames_tensor
         return sample
 
+    def _collate_batch(self, samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Collate a list of samples into a batch.
+        
+        Args:
+            samples: List of sample dictionaries
+            
+        Returns:
+            Batched dictionary with stacked tensors
+        """
+        if not samples:
+            raise ValueError("Cannot collate empty batch")
+        
+        # Check if all samples have audio features
+        has_audio = all("audio_mel_frames" in sample for sample in samples)
+        
+        # Stack video data: [batch_size, T, H, W, 3]
+        video_data = torch.stack([sample["data"] for sample in samples])
+        
+        # Stack labels: [batch_size]
+        labels = torch.tensor([sample["label"] for sample in samples], dtype=torch.long)
+        
+        # Collect metadata
+        metadata = [sample["metadata"] for sample in samples]
+        
+        # Create batch dictionary
+        batch = {
+            "data": video_data,
+            "label": labels,
+            "metadata": metadata,
+        }
+        
+        # Stack audio features if present
+        if has_audio:
+            audio_data = torch.stack([sample["audio_mel_frames"] for sample in samples])
+            batch["audio_mel_frames"] = audio_data
+        
+        return batch
+
     def _process_sample_from_tar(self, tar: tarfile.TarFile, members: Dict[str, tarfile.TarInfo],
                                  sample_id: str, sample_dir: str, num_frames: int,
                                  label: int, meta_json: str) -> Dict[str, Any]:
@@ -141,8 +181,8 @@ class ShardClipDataset(IterableDataset):
         # Create and return sample
         return self._create_sample_dict(data, label, meta, mel_frames_tensor)
 
-    def _iter_samples(self):
-        """Main iterator that yields samples from shard files."""
+    def _iter_batches(self):
+        """Main iterator that yields batches from shard files."""
         shard_to_entries = self._group_entries_by_shard()
 
         for shard_name, entries in shard_to_entries.items():
@@ -151,8 +191,19 @@ class ShardClipDataset(IterableDataset):
                 # Index members for quick access
                 members = {m.name: m for m in tar.getmembers()}
 
+                # Accumulate samples into batches
+                batch = []
                 for sample_id, _, sample_dir, num_frames, label, meta_json in entries:
                     sample = self._process_sample_from_tar(
                         tar, members, sample_id, sample_dir, num_frames, label, meta_json
                     )
-                    yield sample
+                    batch.append(sample)
+                    
+                    # Yield batch when it reaches the desired size
+                    if len(batch) == self.batch_size:
+                        yield self._collate_batch(batch)
+                        batch = []
+                
+                # Yield remaining samples as final batch
+                if batch:
+                    yield self._collate_batch(batch)

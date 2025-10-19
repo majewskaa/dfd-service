@@ -11,7 +11,7 @@ preprocessing:
     margin: 0.2  # Margin around detected face as percentage of face size
 
   image_processing:
-    target_size: [ 224, 224 ]
+    target_size: [ 299, 299 ]  # 299 x 299 for exception
     normalization:
       mean: [ 0.485, 0.456, 0.406 ]  # ImageNet mean
       std: [ 0.229, 0.224, 0.225 ]   # ImageNet std
@@ -23,6 +23,7 @@ preprocessing:
     n_fft: 1024
     hop_length: 256
     mel_overlap_ratio: 0.5  # Overlap ratio for mel spectrograms (0.0-1.0)
+    target_mel_size: [299, 299]  # Target size for resizing mel spectrograms (height, width)
 
 output:
   # WebDataset configuration

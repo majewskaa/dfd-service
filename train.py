@@ -17,18 +17,13 @@ Usage:
 """
 
 import argparse
-import yaml
-import torch
-import random
-import numpy as np
-from pathlib import Path
-import sys
-import os
 import importlib
+import random
 from typing import Dict, Any
 
-# Add src directory to Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import numpy as np
+import torch
+import yaml
 
 from src.data.shard_dataset import ShardClipDataset
 from src.models.base import BaseDetector
@@ -37,17 +32,7 @@ from src.training.trainer import Trainer
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Universal training pipeline for deepfake detection models",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/training.yaml",
-        help="Path to training configuration file (default: configs/training.yaml)"
-    )
+    parser = argparse.ArgumentParser(description="Universal training pipeline for deepfake detection models")
     parser.add_argument(
         "--resume",
         type=str,
@@ -107,21 +92,21 @@ def create_model(config: Dict[str, Any]) -> BaseDetector:
     model_name = model_config["name"]
     module_path = model_config["module_path"]
     num_classes = model_config["num_classes"]
-    
+
     # Load model class dynamically
     print(f"Loading model: {model_name} from {module_path}")
     ModelClass = load_model_class(module_path, model_name)
-    
+
     # Get model-specific parameters
     model_params = model_config.get("model_params", {})
-    
+
     # Create model instance
     model = ModelClass(num_classes=num_classes, **model_params)
-    
+
     # Verify it's a BaseDetector subclass
     if not isinstance(model, BaseDetector):
         raise TypeError(f"Model {model_name} must inherit from BaseDetector")
-    
+
     print(f"✓ Model created successfully: {model_name}")
     return model
 
@@ -138,29 +123,31 @@ def create_data_loaders(config: Dict[str, Any], device: str):
     """
     data_config = config["data"]
     shards_dir = data_config["shards_dir"]
-    
+
     print(f"Loading datasets from: {shards_dir}")
-    
+
     # Create training dataset
     train_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["train_index"],
         target_device=device,
-        max_samples=data_config.get("max_train_samples")
+        max_samples=data_config.get("max_train_samples"),
+        batch_size=data_config.get("batch_size", 16)
     )
-    
+
     # Create validation dataset
     val_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["val_index"],
         target_device=device,
-        max_samples=data_config.get("max_val_samples")
+        max_samples=data_config.get("max_val_samples"),
+        batch_size=data_config.get("batch_size", 16)
     )
-    
-    print(f"✓ Training dataset loaded")
-    print(f"✓ Validation dataset loaded")
-    
-    # Note: IterableDataset doesn't need DataLoader for batching
+
+    print(f"✓ Training dataset loaded (batch_size={data_config.get('batch_size', 16)})")
+    print(f"✓ Validation dataset loaded (batch_size={data_config.get('batch_size', 16)})")
+
+    # Note: IterableDataset with built-in batching doesn't need DataLoader
     # We return the datasets directly as "loaders" since Trainer expects iterables
     return train_dataset, val_dataset
 
@@ -175,10 +162,10 @@ def load_checkpoint(checkpoint_path: str, model: BaseDetector, trainer: Trainer 
     """
     print(f"Loading checkpoint from: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    
+
     # Load model state
     model.load_state_dict(checkpoint["model_state_dict"])
-    
+
     # Load trainer state if provided
     if trainer is not None:
         trainer.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -186,15 +173,15 @@ def load_checkpoint(checkpoint_path: str, model: BaseDetector, trainer: Trainer 
             trainer.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         trainer.current_epoch = checkpoint.get("epoch", 0)
         trainer.best_metric = checkpoint.get("best_metric", float("-inf"))
-    
+
     print(f"✓ Checkpoint loaded (epoch {checkpoint.get('epoch', 0)})")
 
 
 def print_config(config: Dict[str, Any]):
     """Print training configuration in a readable format."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TRAINING CONFIGURATION")
-    print("="*70)
+    print("=" * 70)
     print(f"Model: {config['model']['name']}")
     print(f"Dataset: {config['data']['shards_dir']}")
     print(f"Epochs: {config['training']['epochs']}")
@@ -203,47 +190,44 @@ def print_config(config: Dict[str, Any]):
     print(f"Scheduler: {config['training']['scheduler']['name']}")
     print(f"Loss: {config['loss']['name']}")
     print(f"Device: {config['device']}")
-    print(f"Checkpoints: {config['checkpointing']['dir']}")
-    print(f"Logs: {config['logging']['log_dir']}")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
 
 def main():
     """Main training pipeline."""
     # Parse arguments
     args = parse_args()
-    
+
     # Load configuration
-    print(f"Loading configuration from: {args.config}")
-    with open(args.config, "r") as f:
+    with open("configs/training.yaml", "r") as f:
         config = yaml.safe_load(f)
-    
+
     # Override device if specified
     if args.device:
         config["device"] = args.device
-    
+
     # Set seed for reproducibility
     set_seed(config.get("seed", 42))
     print(f"✓ Random seed set to {config.get('seed', 42)}")
-    
+
     # Set device
     device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
     if device.startswith("cuda") and not torch.cuda.is_available():
         print("Warning: CUDA not available, falling back to CPU")
         device = "cpu"
     print(f"✓ Using device: {device}")
-    
+
     # Print configuration
     print_config(config)
-    
+
     # Create model
     print("Initializing model...")
     model = create_model(config)
-    
+
     # Create data loaders
     print("\nLoading datasets...")
     train_loader, val_loader = create_data_loaders(config, device)
-    
+
     # Create trainer
     print("\nInitializing trainer...")
     trainer = Trainer(
@@ -253,32 +237,32 @@ def main():
         config=config,
         device=device
     )
-    
+
     # Resume from checkpoint if specified
     if args.resume:
         load_checkpoint(args.resume, model, trainer)
-    
+
     # Train model
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("STARTING TRAINING")
-    print("="*70 + "\n")
-    
+    print("=" * 70 + "\n")
+
     try:
         trainer.train()
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("TRAINING COMPLETED SUCCESSFULLY")
-        print("="*70)
+        print("=" * 70)
         print(f"\nBest model saved to: {trainer.checkpoint_dir / 'best_model.pth'}")
         print(f"Logs saved to: {trainer.log_dir}")
-        
+
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user")
         print(f"Latest checkpoint saved to: {trainer.checkpoint_dir}")
-        
+
     except Exception as e:
         print(f"\n\nTraining failed with error: {e}")
         raise
 
 
 if __name__ == "__main__":
-    main() 
+    main()
