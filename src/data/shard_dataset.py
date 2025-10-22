@@ -115,10 +115,9 @@ class ShardClipDataset(IterableDataset):
         meta = json.loads(meta_json)
         meta.update({"id": sample_id, "num_frames": num_frames})
 
-        # Load audio features (optional)
+        # Load audio features
         audio_mel = ShardClipDataset._load_audio_features(tar, members, sample_dir)
 
-        # Create sample
         sample = {
             "video_frames": torch.from_numpy(np.stack(frames).astype(np.uint8)).to(self.target_device),
             "label": label,
@@ -162,9 +161,7 @@ class ShardClipDataset(IterableDataset):
                 data_reshaped = data.reshape(shape).copy()
                 return torch.from_numpy(data_reshaped)
         except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
-            # Log specific error for debugging if needed
             print(f"Failed to load audio features: {e}")
-            pass
 
         return None
 
@@ -174,7 +171,6 @@ class ShardClipDataset(IterableDataset):
         if not samples:
             raise ValueError("Cannot collate empty batch")
 
-        # Stack video data
         video_data = torch.stack([sample["video_frames"] for sample in samples])
         labels = torch.tensor([sample["label"] for sample in samples], dtype=torch.long)
         metadata = [sample["metadata"] for sample in samples]
@@ -185,7 +181,6 @@ class ShardClipDataset(IterableDataset):
             "metadata": metadata,
         }
 
-        # Stack audio features if all samples have them
         if all("audio_frames" in sample for sample in samples):
             batch["audio_frames"] = torch.stack([sample["audio_frames"] for sample in samples])
 
