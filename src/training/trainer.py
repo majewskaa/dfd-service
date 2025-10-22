@@ -104,12 +104,12 @@ class Trainer:
         raise ValueError(f"Unsupported loss function: {name}")
 
     def _prepare_batch(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        video_frames = batch["data"]
+        video_frames = batch["video_frames"]
         if video_frames.dim() == 5:
             video_frames = video_frames.permute(0, 1, 4, 2, 3)
         video_frames = video_frames.float() / 255.0
 
-        audio_mel = batch["audio_mel_frames"]
+        audio_mel = batch["audio_frames"]
         if audio_mel.dim() == 4:
             audio_mel = audio_mel.unsqueeze(2)
 

@@ -119,14 +119,14 @@ def load_model(checkpoint_path: str, device: str) -> BaseDetector:
 def prepare_batch(sample: Dict[str, Any], device: str):
     """Prepare batch data for multi-modal model."""
     # Extract video frames
-    video_frames = sample["data"]
+    video_frames = sample["video_frames"]
     if video_frames.dim() == 4:
         video_frames = video_frames.permute(0, 3, 1, 2)
         video_frames = video_frames.unsqueeze(0)
     video_frames = video_frames.float() / 255.0
     
     # Extract audio mel spectrogram
-    audio_mel = sample["audio_mel_frames"]
+    audio_mel = sample["audio_frames"]
     if audio_mel.dim() == 3:
         audio_mel = audio_mel.unsqueeze(0).unsqueeze(2)
     

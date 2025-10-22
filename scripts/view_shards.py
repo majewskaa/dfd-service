@@ -78,8 +78,8 @@ def main(shards_dir: str, index_filename: str, device: str, max_samples: Optiona
 
     try:
         for idx, sample in enumerate(ds):
-            has_audio = "audio_mel_frames" in sample
-            data: torch.Tensor = sample["data"]
+            has_audio = "audio_frames" in sample
+            data: torch.Tensor = sample["video_frames"]
             label = int(sample["label"]) if not isinstance(sample["label"], torch.Tensor) else int(
                 sample["label"].item())
             meta = sample.get("metadata", {})
