@@ -150,7 +150,7 @@ def prepare_batch_for_encoder(batch: Dict[str, Any], device: str):
     video_frames = batch["data"]
     if video_frames.dim() == 5:
         # Convert from (B, T, H, W, C) to (B, C, T, H, W)
-        video_frames = video_frames.permute(0, 1, 4, 2, 3)
+        video_frames = video_frames.permute(0, 4, 1, 2, 3)
     video_frames = video_frames.float() / 255.0
 
     audio_mel = batch["audio_mel_frames"]
