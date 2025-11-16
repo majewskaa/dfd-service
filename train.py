@@ -130,7 +130,7 @@ def create_data_loaders(config: Dict[str, Any], device: str):
     train_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["train_index"],
-        target_device=device,
+        target_device="cpu",
         max_samples=data_config.get("max_train_samples"),
         batch_size=data_config.get("batch_size", 16)
     )
@@ -139,7 +139,7 @@ def create_data_loaders(config: Dict[str, Any], device: str):
     val_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["val_index"],
-        target_device=device,
+        target_device="cpu",
         max_samples=data_config.get("max_val_samples"),
         batch_size=data_config.get("batch_size", 16)
     )
