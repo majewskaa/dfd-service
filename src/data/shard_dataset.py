@@ -54,16 +54,21 @@ class ShardClipDataset(IterableDataset):
             shard_path = os.path.join(self.shards_dir, shard_name)
 
             with tarfile.open(shard_path, mode="r") as tar:
-                members = {m.name: m for m in tar.getmembers()}
+                # Lazy member lookup: only create dict when needed, use getmember() for individual lookups
+                # This avoids loading all members into memory at once
+                _members_cache = {}
 
                 batch = []
                 for sample_id, _, sample_dir, num_frames, label, meta_json in entries:
-                    sample = self._load_sample(tar, members, sample_id, sample_dir, num_frames, label, meta_json)
+                    sample = self._load_sample(tar, _members_cache, sample_id, sample_dir, num_frames, label, meta_json)
                     batch.append(sample)
 
                     if len(batch) == self.batch_size:
                         yield ShardClipDataset._collate_batch(batch)
                         batch = []
+                        # Clear cache periodically to free memory
+                        if len(_members_cache) > 1000:
+                            _members_cache.clear()
 
                 if batch:
                     yield ShardClipDataset._collate_batch(batch)
@@ -91,7 +96,7 @@ class ShardClipDataset(IterableDataset):
     def _load_sample(
             self,
             tar: tarfile.TarFile,
-            members: Dict[str, tarfile.TarInfo],
+            members_cache: Dict[str, tarfile.TarInfo],
             sample_id: str,
             sample_dir: str,
             num_frames: int,
@@ -99,27 +104,54 @@ class ShardClipDataset(IterableDataset):
             meta_json: str
     ) -> Dict[str, Any]:
         """Load a single sample from the tar file."""
-        # Load video frames
-        frames = []
+        # Load video frames directly into pre-allocated array to avoid list overhead
+        # Decode first frame to get dimensions, then pre-allocate array for remaining frames
+        frames_array = None
+        frame_idx = 0
+        
         for i in range(num_frames):
+            frame_found = False
             for ext in (".webp", ".jpg"):
                 frame_name = f"{sample_dir}/frame_{i:03d}{ext}"
-                if frame_name in members:
-                    buf = tar.extractfile(members[frame_name]).read()
-                    frames.append(_decode_image(buf))
-                    break
-            else:
+                # Lazy member lookup with caching
+                if frame_name not in members_cache:
+                    try:
+                        member = tar.getmember(frame_name)
+                        members_cache[frame_name] = member
+                    except KeyError:
+                        continue
+                
+                member = members_cache[frame_name]
+                buf = tar.extractfile(member).read()
+                decoded = _decode_image(buf)
+                
+                if frames_array is None:
+                    # First frame: get dimensions and pre-allocate array
+                    H, W, C = decoded.shape
+                    frames_array = np.empty((num_frames, H, W, C), dtype=np.uint8)
+                    frames_array[0] = decoded
+                    frame_idx = 1
+                else:
+                    # Subsequent frames: fill pre-allocated array
+                    frames_array[frame_idx] = decoded
+                    frame_idx += 1
+                
+                frame_found = True
+                break
+            
+            if not frame_found:
                 raise FileNotFoundError(f"Missing frame {i} for {sample_id}")
-
+        
         # Load metadata
         meta = json.loads(meta_json)
         meta.update({"id": sample_id, "num_frames": num_frames})
 
         # Load audio features
-        audio_mel = ShardClipDataset._load_audio_features(tar, members, sample_dir)
+        audio_mel = ShardClipDataset._load_audio_features(tar, members_cache, sample_dir)
 
+        # Convert directly from pre-allocated array to tensor (single copy)
         sample = {
-            "video_frames": torch.from_numpy(np.stack(frames).astype(np.uint8)).to(self.target_device),
+            "video_frames": torch.from_numpy(frames_array).to(self.target_device),
             "label": label,
             "metadata": meta,
         }
@@ -132,26 +164,32 @@ class ShardClipDataset(IterableDataset):
     @staticmethod
     def _load_audio_features(
             tar: tarfile.TarFile,
-            members: Dict[str, tarfile.TarInfo],
+            members_cache: Dict[str, tarfile.TarInfo],
             sample_dir: str
     ) -> Optional[torch.Tensor]:
         """Load optional audio mel features."""
         shape_file = f"{sample_dir}/audio_mel_frames.json"
         data_file = f"{sample_dir}/audio_mel_frames.f16"
 
-        if shape_file not in members or data_file not in members:
+        # Lazy member lookup with caching
+        try:
+            if shape_file not in members_cache:
+                members_cache[shape_file] = tar.getmember(shape_file)
+            if data_file not in members_cache:
+                members_cache[data_file] = tar.getmember(data_file)
+        except KeyError:
             return None
 
         try:
             # Load shape info
-            shape_info = json.loads(tar.extractfile(members[shape_file]).read().decode("utf-8"))
+            shape_info = json.loads(tar.extractfile(members_cache[shape_file]).read().decode("utf-8"))
             shape = shape_info.get("shape", [])
 
             if len(shape) != 3:
                 return None
 
             # Load data
-            data_bytes = tar.extractfile(members[data_file]).read()
+            data_bytes = tar.extractfile(members_cache[data_file]).read()
             data = np.frombuffer(data_bytes, dtype=np.float16)
 
             # Reshape and convert to tensor
