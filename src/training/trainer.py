@@ -128,7 +128,7 @@ class Trainer:
             image_input, audio_input, target = self._prepare_batch(batch)
 
             self.optimizer.zero_grad()
-            output = self.model(image_input, audio_input)
+            output = self.model(image_input.type(torch.cuda.FloatTensor), audio_input.type(torch.cuda.FloatTensor))
             loss = self.criterion(output, target)
             loss.backward()
 
