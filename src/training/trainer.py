@@ -239,7 +239,7 @@ class Trainer:
             self._log_metrics(train_metrics, val_metrics)
             self._save_checkpoint(val_metrics)
 
-            if self._should_stop_early(val_metrics):
+            if self._should_stop_early():
                 print("Early stopping triggered")
                 break
 
