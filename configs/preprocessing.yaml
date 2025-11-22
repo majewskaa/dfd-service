@@ -22,7 +22,7 @@ preprocessing:
     n_mels: 64
     n_fft: 1024
     hop_length: 256
-    mel_overlap_ratio: 0.5  # Overlap ratio for mel spectrograms (0.0-1.0)
+    mel_overlap_ratio: 0.1  # Overlap ratio for mel spectrograms (0.0-1.0)
     target_mel_size: [299, 299]  # Target size for resizing mel spectrograms (height, width)
 
 output:
@@ -31,7 +31,7 @@ output:
     prefix: "shard"
     max_shard_size_mb: 1024
     image_codec: "webp"     # "webp" or "jpeg"
-    image_quality: 90        # 1-100
+    image_quality: 80        # 1-100
     index_filename: "index.csv"
-    clip_length: 16
-    clip_stride: 8
+    clip_length: 50
+    clip_stride: 40

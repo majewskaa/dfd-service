@@ -6,8 +6,9 @@ data:
   
   # Data loading configuration
   batch_size: 16  # Mini-batch size for training
-  num_workers: 0  # Number of data loading workers (0 for IterableDataset)
+  num_workers: 4  # Number of data loading workers
   pin_memory: true
+  frames_per_clip: 32 # Number of frames to sample per video clip
   
   # Optional: limit samples for debugging
   max_train_samples: null  # Set to integer to limit training samples
@@ -65,4 +66,4 @@ checkpointing:
 device: "cuda"  # Options: "cuda", "cpu", "cuda:0", "cuda:1", etc.
 
 # Seed for reproducibility
-seed: 42 
+seed: 42

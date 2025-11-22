@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Universal Training Pipeline for Deepfake Detection Models
+Universal Training Pipeline for Multimodal Deepfake Detection Models
 
 This script provides a flexible training pipeline that works with any model
 extending the BaseDetector class. It supports multi-modal (video + audio) 
@@ -28,11 +28,12 @@ import yaml
 from src.data.shard_dataset import ShardClipDataset
 from src.models.base import BaseDetector
 from src.training.trainer import Trainer
+from torch.utils.data import DataLoader
 
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Universal training pipeline for deepfake detection models")
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--resume",
         type=str,
@@ -42,7 +43,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=str,
-        default=None,
+        default="cuda",
         help="Device to use (overrides config). Options: cuda, cpu, cuda:0, etc."
     )
     return parser.parse_args()
@@ -123,16 +124,20 @@ def create_data_loaders(config: Dict[str, Any], device: str):
     """
     data_config = config["data"]
     shards_dir = data_config["shards_dir"]
+    frames_per_clip = data_config.get("frames_per_clip", 32)
+    num_workers = data_config.get("num_workers", 4)
+    batch_size = data_config.get("batch_size", 16)
 
     print(f"Loading datasets from: {shards_dir}")
+    print(f"Configuration: batch_size={batch_size}, frames_per_clip={frames_per_clip}, num_workers={num_workers}")
 
     # Create training dataset
     train_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["train_index"],
-        target_device="cpu",
+        target_device="cpu", # Data loading happens on CPU
         max_samples=data_config.get("max_train_samples"),
-        batch_size=data_config.get("batch_size", 16)
+        frames_per_clip=frames_per_clip
     )
 
     # Create validation dataset
@@ -141,15 +146,32 @@ def create_data_loaders(config: Dict[str, Any], device: str):
         index_filename=data_config["val_index"],
         target_device="cpu",
         max_samples=data_config.get("max_val_samples"),
-        batch_size=data_config.get("batch_size", 16)
+        frames_per_clip=frames_per_clip
     )
 
-    print(f"✓ Training dataset loaded (batch_size={data_config.get('batch_size', 16)})")
-    print(f"✓ Validation dataset loaded (batch_size={data_config.get('batch_size', 16)})")
+    # Create DataLoaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=data_config.get("pin_memory", True),
+        collate_fn=ShardClipDataset.collate_fn,
+        drop_last=True
+    )
 
-    # Note: IterableDataset with built-in batching doesn't need DataLoader
-    # We return the datasets directly as "loaders" since Trainer expects iterables
-    return train_dataset, val_dataset
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=data_config.get("pin_memory", True),
+        collate_fn=ShardClipDataset.collate_fn,
+        drop_last=False
+    )
+
+    print(f"✓ Training loader ready")
+    print(f"✓ Validation loader ready")
+
+    return train_loader, val_loader
 
 
 def load_checkpoint(checkpoint_path: str, model: BaseDetector, trainer: Trainer = None):
@@ -208,14 +230,14 @@ def main():
 
     # Set seed for reproducibility
     set_seed(config.get("seed", 42))
-    print(f"✓ Random seed set to {config.get('seed', 42)}")
+    print(f"Random seed set to {config.get('seed', 42)}")
 
     # Set device
     device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
     if device.startswith("cuda") and not torch.cuda.is_available():
         print("Warning: CUDA not available, falling back to CPU")
         device = "cpu"
-    print(f"✓ Using device: {device}")
+    print(f"Using device: {device}")
 
     # Print configuration
     print_config(config)
@@ -223,6 +245,15 @@ def main():
     # Create model
     print("Initializing model...")
     model = create_model(config)
+    # param_size = 0
+    # for param in model.parameters():
+    #     param_size += param.nelement() * param.element_size()
+    # buffer_size = 0
+    # for buffer in model.buffers():
+    #     buffer_size += buffer.nelement() * buffer.element_size()
+
+    # size_all_mb = (param_size + buffer_size) / 1024 ** 2
+    # print('model size: {:.3f}MB'.format(size_all_mb))
 
     # Create data loaders
     print("\nLoading datasets...")

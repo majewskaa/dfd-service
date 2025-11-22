@@ -21,11 +21,11 @@ def _decode_image(buf: bytes) -> np.ndarray:
 class ShardClipDataset(IterableDataset):
     """Streams tar shards of video samples with frames and metadata.
 
-    Yields batches with:
-    - video_frames: Tensor[batch_size, T, H, W, 3] - video frames
-    - label: Tensor[batch_size] - binary labels
-    - metadata: List[dict] - sample metadata
-    - audio_frames: Tensor[batch_size, T, n_mels, mel_frames_per_frame] (optional)
+    Yields individual samples (not batches):
+    - video_frames: Tensor[T, H, W, 3] - video frames
+    - label: int - binary label
+    - metadata: dict - sample metadata
+    - audio_frames: Tensor[T, n_mels, mel_frames_per_frame] (optional)
     """
 
     def __init__(
@@ -34,14 +34,14 @@ class ShardClipDataset(IterableDataset):
             index_filename: str = "index.csv",
             target_device: str = "cpu",
             max_samples: Optional[int] = None,
-            batch_size: int = 1,
+            frames_per_clip: int = 32,
     ):
         super().__init__()
         self.shards_dir = shards_dir
         self.index_path = os.path.join(shards_dir, index_filename)
         self.target_device = target_device
         self.max_samples = max_samples
-        self.batch_size = batch_size
+        self.frames_per_clip = frames_per_clip
 
         if not os.path.exists(self.index_path):
             raise FileNotFoundError(f"Index not found: {self.index_path}")
@@ -49,8 +49,24 @@ class ShardClipDataset(IterableDataset):
         self._entries = self._load_index()
 
     def __iter__(self):
-        """Iterate through batches of samples."""
-        for shard_name, entries in self._group_entries_by_shard().items():
+        """Iterate through samples."""
+        worker_info = torch.utils.data.get_worker_info()
+        
+        # Group entries by shard
+        shard_to_entries = self._group_entries_by_shard()
+        shards = list(shard_to_entries.keys())
+        
+        # Handle multi-processing
+        if worker_info is not None:
+            # Split shards among workers
+            per_worker = int(np.ceil(len(shards) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, len(shards))
+            shards = shards[iter_start:iter_end]
+        
+        for shard_name in shards:
+            entries = shard_to_entries[shard_name]
             shard_path = os.path.join(self.shards_dir, shard_name)
 
             with tarfile.open(shard_path, mode="r") as tar:
@@ -58,20 +74,17 @@ class ShardClipDataset(IterableDataset):
                 # This avoids loading all members into memory at once
                 _members_cache = {}
 
-                batch = []
                 for sample_id, _, sample_dir, num_frames, label, meta_json in entries:
-                    sample = self._load_sample(tar, _members_cache, sample_id, sample_dir, num_frames, label, meta_json)
-                    batch.append(sample)
-
-                    if len(batch) == self.batch_size:
-                        yield ShardClipDataset._collate_batch(batch)
-                        batch = []
-                        # Clear cache periodically to free memory
-                        if len(_members_cache) > 1000:
-                            _members_cache.clear()
-
-                if batch:
-                    yield ShardClipDataset._collate_batch(batch)
+                    try:
+                        sample = self._load_sample(tar, _members_cache, sample_id, sample_dir, num_frames, label, meta_json)
+                        yield sample
+                    except Exception as e:
+                        print(f"Error loading sample {sample_id}: {e}")
+                        continue
+                        
+                    # Clear cache periodically to free memory
+                    if len(_members_cache) > 1000:
+                        _members_cache.clear()
 
     def _load_index(self) -> List[Tuple[str, str, str, int, int, str]]:
         """Load and parse the CSV index file."""
@@ -93,6 +106,15 @@ class ShardClipDataset(IterableDataset):
             shard_to_entries.setdefault(entry[1], []).append(entry)
         return shard_to_entries
 
+    def _sample_frame_indices(self, num_frames: int) -> np.ndarray:
+        """Sample indices for frames."""
+        if num_frames <= self.frames_per_clip:
+            return np.arange(num_frames)
+        
+        # Uniform sampling
+        indices = np.linspace(0, num_frames - 1, self.frames_per_clip, dtype=int)
+        return indices
+
     def _load_sample(
             self,
             tar: tarfile.TarFile,
@@ -104,15 +126,17 @@ class ShardClipDataset(IterableDataset):
             meta_json: str
     ) -> Dict[str, Any]:
         """Load a single sample from the tar file."""
-        # Load video frames directly into pre-allocated array to avoid list overhead
-        # Decode first frame to get dimensions, then pre-allocate array for remaining frames
-        frames_array = None
-        frame_idx = 0
+        # Determine which frames to load
+        frame_indices = self._sample_frame_indices(num_frames)
+        actual_num_frames = len(frame_indices)
         
-        for i in range(num_frames):
+        # Load video frames directly into pre-allocated array
+        frames_array = None
+        
+        for i, frame_idx in enumerate(frame_indices):
             frame_found = False
             for ext in (".webp", ".jpg"):
-                frame_name = f"{sample_dir}/frame_{i:03d}{ext}"
+                frame_name = f"{sample_dir}/frame_{frame_idx:03d}{ext}"
                 # Lazy member lookup with caching
                 if frame_name not in members_cache:
                     try:
@@ -128,26 +152,30 @@ class ShardClipDataset(IterableDataset):
                 if frames_array is None:
                     # First frame: get dimensions and pre-allocate array
                     H, W, C = decoded.shape
-                    frames_array = np.empty((num_frames, H, W, C), dtype=np.uint8)
+                    frames_array = np.empty((actual_num_frames, H, W, C), dtype=np.uint8)
                     frames_array[0] = decoded
-                    frame_idx = 1
                 else:
                     # Subsequent frames: fill pre-allocated array
-                    frames_array[frame_idx] = decoded
-                    frame_idx += 1
+                    frames_array[i] = decoded
                 
                 frame_found = True
                 break
             
             if not frame_found:
-                raise FileNotFoundError(f"Missing frame {i} for {sample_id}")
+                raise FileNotFoundError(f"Missing frame {frame_idx} for {sample_id}")
         
         # Load metadata
         meta = json.loads(meta_json)
-        meta.update({"id": sample_id, "num_frames": num_frames})
+        meta.update({"id": sample_id, "num_frames": num_frames, "sampled_frames": actual_num_frames})
 
         # Load audio features
         audio_mel = ShardClipDataset._load_audio_features(tar, members_cache, sample_dir)
+        
+        # If audio exists, we need to sample it too to match video temporal dimension if needed
+        # For now, we assume audio features are already aligned or model handles it
+        # But if audio has temporal dimension matching video frames, we should sample it
+        if audio_mel is not None and audio_mel.shape[0] == num_frames:
+             audio_mel = audio_mel[frame_indices]
 
         # Convert directly from pre-allocated array to tensor (single copy)
         sample = {
@@ -204,7 +232,7 @@ class ShardClipDataset(IterableDataset):
         return None
 
     @staticmethod
-    def _collate_batch(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def collate_fn(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Collate samples into a batch."""
         if not samples:
             raise ValueError("Cannot collate empty batch")
