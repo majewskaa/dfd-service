@@ -1,146 +1,64 @@
 #!/usr/bin/env python3
 """
 Universal Training Pipeline for Multimodal Deepfake Detection Models
-
-This script provides a flexible training pipeline that works with any model
-extending the BaseDetector class. It supports multi-modal (video + audio) 
-deepfake detection using preprocessed shard datasets.
+Powered by PyTorch Lightning
 
 Usage:
     python train.py --config configs/training.yaml
-    
-    # With custom configuration
-    python train.py --config configs/custom_training.yaml
-    
-    # Resume from checkpoint
-    python train.py --config configs/training.yaml --resume checkpoints/best_model.pth
 """
 
 import argparse
 import importlib
-import random
 from typing import Dict, Any
 
-import numpy as np
-import torch
+import pytorch_lightning as pl
 import yaml
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
+from torch.utils.data import DataLoader
+import torch
 
 from src.data.shard_dataset import ShardClipDataset
 from src.models.base import BaseDetector
-from src.training.trainer import Trainer
-from torch.utils.data import DataLoader
+from src.training.lightning_module import DeepfakeTask
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Path to checkpoint to resume training from"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda",
-        help="Device to use (overrides config). Options: cuda, cpu, cuda:0, etc."
-    )
+    parser.add_argument("--config", type=str, default="configs/training.yaml", help="Path to config file")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     return parser.parse_args()
 
 
-def set_seed(seed: int):
-    """Set random seed for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
 def load_model_class(module_path: str, class_name: str):
-    """Dynamically load model class from module path.
-    
-    Args:
-        module_path: Python import path (e.g., "src.models.xception")
-        class_name: Name of the class to import
-        
-    Returns:
-        Model class
-    """
     try:
         module = importlib.import_module(module_path)
-        model_class = getattr(module, class_name)
-        return model_class
+        return getattr(module, class_name)
     except (ImportError, AttributeError) as e:
         raise RuntimeError(f"Failed to load model class '{class_name}' from '{module_path}': {e}")
 
 
 def create_model(config: Dict[str, Any]) -> BaseDetector:
-    """Create model instance based on configuration.
-    
-    This function dynamically loads the model class specified in the config,
-    making it flexible to support any BaseDetector subclass.
-    
-    Args:
-        config: Training configuration dictionary
-        
-    Returns:
-        Initialized model instance
-    """
     model_config = config["model"]
-    model_name = model_config["name"]
-    module_path = model_config["module_path"]
-    num_classes = model_config["num_classes"]
-
-    # Load model class dynamically
-    print(f"Loading model: {model_name} from {module_path}")
-    ModelClass = load_model_class(module_path, model_name)
-
-    # Get model-specific parameters
-    model_params = model_config.get("model_params", {})
-
-    # Create model instance
-    model = ModelClass(num_classes=num_classes, **model_params)
-
-    # Verify it's a BaseDetector subclass
-    if not isinstance(model, BaseDetector):
-        raise TypeError(f"Model {model_name} must inherit from BaseDetector")
-
-    print(f"✓ Model created successfully: {model_name}")
+    ModelClass = load_model_class(model_config["module_path"], model_config["name"])
+    model = ModelClass(num_classes=model_config["num_classes"], **model_config.get("model_params", {}))
     return model
 
 
-def create_data_loaders(config: Dict[str, Any], device: str):
-    """Create training and validation data loaders from shard datasets.
-    
-    Args:
-        config: Training configuration dictionary
-        device: Device for data loading
-        
-    Returns:
-        Tuple of (train_loader, val_loader)
-    """
+def create_data_loaders(config: Dict[str, Any]):
     data_config = config["data"]
     shards_dir = data_config["shards_dir"]
     frames_per_clip = data_config.get("frames_per_clip", 32)
     num_workers = data_config.get("num_workers", 4)
     batch_size = data_config.get("batch_size", 16)
 
-    print(f"Loading datasets from: {shards_dir}")
-    print(f"Configuration: batch_size={batch_size}, frames_per_clip={frames_per_clip}, num_workers={num_workers}")
-
-    # Create training dataset
     train_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["train_index"],
-        target_device="cpu", # Data loading happens on CPU
+        target_device="cpu",
         max_samples=data_config.get("max_train_samples"),
         frames_per_clip=frames_per_clip
     )
 
-    # Create validation dataset
     val_dataset = ShardClipDataset(
         shards_dir=shards_dir,
         index_filename=data_config["val_index"],
@@ -149,14 +67,14 @@ def create_data_loaders(config: Dict[str, Any], device: str):
         frames_per_clip=frames_per_clip
     )
 
-    # Create DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
         pin_memory=data_config.get("pin_memory", True),
         collate_fn=ShardClipDataset.collate_fn,
-        drop_last=True
+        drop_last=True,
+        persistent_workers=num_workers > 0
     )
 
     val_loader = DataLoader(
@@ -165,134 +83,69 @@ def create_data_loaders(config: Dict[str, Any], device: str):
         num_workers=num_workers,
         pin_memory=data_config.get("pin_memory", True),
         collate_fn=ShardClipDataset.collate_fn,
-        drop_last=False
+        drop_last=False,
+        persistent_workers=num_workers > 0
     )
-
-    print(f"✓ Training loader ready")
-    print(f"✓ Validation loader ready")
 
     return train_loader, val_loader
 
 
-def load_checkpoint(checkpoint_path: str, model: BaseDetector, trainer: Trainer = None):
-    """Load model and training state from checkpoint.
-    
-    Args:
-        checkpoint_path: Path to checkpoint file
-        model: Model instance to load state into
-        trainer: Optional trainer instance to restore training state
-    """
-    print(f"Loading checkpoint from: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-
-    # Load model state
-    model.load_state_dict(checkpoint["model_state_dict"])
-
-    # Load trainer state if provided
-    if trainer is not None:
-        trainer.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        if checkpoint.get("scheduler_state_dict") and trainer.scheduler:
-            trainer.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-        trainer.current_epoch = checkpoint.get("epoch", 0)
-        trainer.best_metric = checkpoint.get("best_metric", float("-inf"))
-
-    print(f"✓ Checkpoint loaded (epoch {checkpoint.get('epoch', 0)})")
-
-
-def print_config(config: Dict[str, Any]):
-    """Print training configuration in a readable format."""
-    print("\n" + "=" * 70)
-    print("TRAINING CONFIGURATION")
-    print("=" * 70)
-    print(f"Model: {config['model']['name']}")
-    print(f"Dataset: {config['data']['shards_dir']}")
-    print(f"Epochs: {config['training']['epochs']}")
-    print(f"Learning Rate: {config['training']['optimizer']['learning_rate']}")
-    print(f"Optimizer: {config['training']['optimizer']['name']}")
-    print(f"Scheduler: {config['training']['scheduler']['name']}")
-    print(f"Loss: {config['loss']['name']}")
-    print(f"Device: {config['device']}")
-    print("=" * 70 + "\n")
-
-
 def main():
-    """Main training pipeline."""
-    # Parse arguments
     args = parse_args()
-
-    # Load configuration
-    with open("configs/training.yaml", "r") as f:
+    with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    # Override device if specified
-    if args.device:
-        config["device"] = args.device
+    # Optimization for Tensor Cores
+    torch.set_float32_matmul_precision('medium')
 
-    # Set seed for reproducibility
-    set_seed(config.get("seed", 42))
-    print(f"Random seed set to {config.get('seed', 42)}")
+    pl.seed_everything(config.get("seed", 42))
 
-    # Set device
-    device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        print("Warning: CUDA not available, falling back to CPU")
-        device = "cpu"
-    print(f"Using device: {device}")
+    # Data
+    print("Loading data...")
+    train_loader, val_loader = create_data_loaders(config)
 
-    # Print configuration
-    print_config(config)
-
-    # Create model
+    # Model
     print("Initializing model...")
-    model = create_model(config)
-    # param_size = 0
-    # for param in model.parameters():
-    #     param_size += param.nelement() * param.element_size()
-    # buffer_size = 0
-    # for buffer in model.buffers():
-    #     buffer_size += buffer.nelement() * buffer.element_size()
+    base_model = create_model(config)
+    task = DeepfakeTask(base_model, config)
 
-    # size_all_mb = (param_size + buffer_size) / 1024 ** 2
-    # print('model size: {:.3f}MB'.format(size_all_mb))
+    # Callbacks
+    callbacks = [
+        ModelCheckpoint(
+            dirpath=config["checkpointing"]["dir"],
+            filename="best-{epoch}-{val_loss:.2f}",
+            monitor=config["checkpointing"]["monitor"],
+            mode=config["checkpointing"]["mode"],
+            save_top_k=1,
+            save_last=True
+        ),
+        LearningRateMonitor(logging_interval="step")
+    ]
 
-    # Create data loaders
-    print("\nLoading datasets...")
-    train_loader, val_loader = create_data_loaders(config, device)
+    if "early_stopping" in config["training"]:
+        es_config = config["training"]["early_stopping"]
+        callbacks.append(EarlyStopping(
+            monitor=config["checkpointing"]["monitor"],
+            patience=es_config["patience"],
+            mode=config["checkpointing"]["mode"],
+            min_delta=es_config.get("min_delta", 0.0)
+        ))
 
-    # Create trainer
-    print("\nInitializing trainer...")
-    trainer = Trainer(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        config=config,
-        device=device
+    # Trainer
+    trainer_config = config.get("trainer", {})
+    trainer = pl.Trainer(
+        max_epochs=config["training"]["epochs"],
+        accelerator="auto",
+        devices="auto",
+        callbacks=callbacks,
+        default_root_dir=config["logging"]["log_dir"],
+        gradient_clip_val=config["training"].get("grad_clip", 0.0),
+        **trainer_config
     )
 
-    # Resume from checkpoint if specified
-    if args.resume:
-        load_checkpoint(args.resume, model, trainer)
-
-    # Train model
-    print("\n" + "=" * 70)
-    print("STARTING TRAINING")
-    print("=" * 70 + "\n")
-
-    try:
-        trainer.train()
-        print("\n" + "=" * 70)
-        print("TRAINING COMPLETED SUCCESSFULLY")
-        print("=" * 70)
-        print(f"\nBest model saved to: {trainer.checkpoint_dir / 'best_model.pth'}")
-        print(f"Logs saved to: {trainer.log_dir}")
-
-    except KeyboardInterrupt:
-        print("\n\nTraining interrupted by user")
-        print(f"Latest checkpoint saved to: {trainer.checkpoint_dir}")
-
-    except Exception as e:
-        print(f"\n\nTraining failed with error: {e}")
-        raise
+    # Train
+    print("Starting training...")
+    trainer.fit(task, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.resume)
 
 
 if __name__ == "__main__":

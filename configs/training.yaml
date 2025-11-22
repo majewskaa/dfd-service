@@ -21,46 +21,41 @@ model:
   num_classes: 2
   
   # Model-specific parameters (passed to __init__ as kwargs)
-  model_params: {}
+  model_params: { }
 
 training:
   epochs: 50
-  grad_clip: 1.0  # Gradient clipping (0 to disable)
+  grad_clip: 1.0
   
   early_stopping:
     patience: 10
     min_delta: 0.001
   
   optimizer:
-    name: "adam"  # Options: "adam", "sgd", "adamw"
+    name: "adam"
     learning_rate: 0.0001
     weight_decay: 0.0001
-    momentum: 0.9  # For SGD
   
   scheduler:
-    name: "cosine"  # Options: "cosine", "step", "plateau", "none"
-    warmup_epochs: 0
+    name: "cosine"
     min_lr: 0.000001
 
 loss:
-  name: "cross_entropy"  # Options: "cross_entropy", "focal"
-  focal_gamma: 2.0  # For focal loss (if used)
+  name: "cross_entropy"
 
 logging:
   log_dir: "logs"
-  save_frequency: 5  # Save checkpoint every N epochs
-  metrics:
-    - "accuracy"
-    - "precision"
-    - "recall"
-    - "f1_score"
-    - "auc_roc"
 
 checkpointing:
   dir: "checkpoints"
-  save_best_only: false  # If false, saves checkpoints every save_frequency epochs
-  monitor: "f1_score"  # Metric to monitor for best model (without "val_" prefix)
-  mode: "max"  # "max" or "min"
+  monitor: "val_loss"
+  mode: "min"
+
+# PyTorch Lightning Trainer specific flags
+trainer:
+  precision: "16-mixed" # Automatic Mixed Precision
+  log_every_n_steps: 10
+  fast_dev_run: false
 
 # Device configuration
 device: "cuda"  # Options: "cuda", "cpu", "cuda:0", "cuda:1", etc.

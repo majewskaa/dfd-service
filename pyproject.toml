@@ -18,6 +18,8 @@ dependencies = [
     "torchvision>=0.22.1",
     "tqdm>=4.67.1",
     "zstandard>=0.24.0",
+    "pytorch-lightning>=2.4.0",
+    "tensorboard>=2.18.0",
 ]
 
 [tool.uv.sources]
