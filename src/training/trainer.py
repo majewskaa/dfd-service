@@ -115,7 +115,7 @@ class Trainer:
 
         labels = batch["label"]
 
-        return video_frames.to(self.device), audio_mel.to(self.device), labels.to(self.device)
+        return video_frames.to(self.device), audio_mel.float().to(self.device), labels.to(self.device)
 
     def train_epoch(self) -> Dict[str, float]:
         self.model.train()
