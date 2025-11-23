@@ -6,7 +6,7 @@ data:
   
   # Data loading configuration
   batch_size: 2  # Mini-batch size for training
-  num_workers: 4  # Number of data loading workers
+  num_workers: 1  # Number of data loading workers
   pin_memory: true
   frames_per_clip: 32 # Number of frames to sample per video clip
   

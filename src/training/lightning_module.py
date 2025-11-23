@@ -55,12 +55,13 @@ class DeepfakeTask(pl.LightningModule):
         loss = self.criterion(outputs, targets)
         
         # Log metrics
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        batch_size = video.shape[0]
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         
         # Calculate simple accuracy for progress bar
         preds = outputs.argmax(dim=1)
         acc = (preds == targets).float().mean()
-        self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         
         return loss
 
@@ -73,7 +74,8 @@ class DeepfakeTask(pl.LightningModule):
         preds = outputs.argmax(dim=1)
         
         # Log loss
-        self.log("val_loss", loss, on_epoch=True, prog_bar=True)
+        batch_size = video.shape[0]
+        self.log("val_loss", loss, on_epoch=True, prog_bar=True, batch_size=batch_size)
         
         return {
             "preds": preds.cpu(),
