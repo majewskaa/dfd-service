@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Universal Training Pipeline for Multimodal Deepfake Detection Models
-Powered by PyTorch Lightning
 
 Usage:
     python train.py --config configs/training.yaml

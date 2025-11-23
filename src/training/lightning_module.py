@@ -1,27 +1,35 @@
+from typing import Dict, Any
+
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
-from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score
-import numpy as np
+import torchmetrics
+
 
 class DeepfakeTask(pl.LightningModule):
     """
     PyTorch Lightning Module for Deepfake Detection.
     Encapsulates model, loss, optimization, and metrics.
     """
+
     def __init__(
-        self, 
-        model: nn.Module, 
-        config: Dict[str, Any]
+            self,
+            model: nn.Module,
+            config: Dict[str, Any]
     ):
         super().__init__()
         self.model = model
         self.config = config
         self.criterion = self._create_criterion()
-        
+
         # Save hyperparameters (excluding model to avoid pickling issues if complex)
         self.save_hyperparameters(ignore=["model"])
+
+        # Metrics
+        self.train_acc = torchmetrics.Accuracy(task="multiclass", num_classes=2)
+        self.val_acc = torchmetrics.Accuracy(task="multiclass", num_classes=2)
+        self.val_f1 = torchmetrics.F1Score(task="multiclass", num_classes=2, average="macro")
+        self.val_auroc = torchmetrics.AUROC(task="multiclass", num_classes=2)
 
     def forward(self, video_frames, audio_frames):
         return self.model(video_frames, audio_frames)
@@ -45,7 +53,7 @@ class DeepfakeTask(pl.LightningModule):
         audio_mel = batch["audio_frames"]
         if audio_mel.dim() == 4:
             audio_mel = audio_mel.unsqueeze(2)
-            
+
         labels = batch["label"]
         return video_frames, audio_mel.float(), labels
 
@@ -53,48 +61,37 @@ class DeepfakeTask(pl.LightningModule):
         video, audio, targets = self._prepare_batch(batch)
         outputs = self(video, audio)
         loss = self.criterion(outputs, targets)
-        
+
         # Log metrics
         batch_size = video.shape[0]
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        
-        # Calculate simple accuracy for progress bar
-        preds = outputs.argmax(dim=1)
-        acc = (preds == targets).float().mean()
-        self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        
+
+        # Calculate metrics
+        self.train_acc(outputs, targets)
+        self.log("train_acc", self.train_acc, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
+
         return loss
 
     def validation_step(self, batch, batch_idx):
         video, audio, targets = self._prepare_batch(batch)
         outputs = self(video, audio)
         loss = self.criterion(outputs, targets)
-        
-        probs = torch.softmax(outputs, dim=1)
-        preds = outputs.argmax(dim=1)
-        
+
         # Log loss
         batch_size = video.shape[0]
         self.log("val_loss", loss, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        
-        return {
-            "preds": preds.cpu(),
-            "targets": targets.cpu(),
-            "probs": probs.cpu()
-        }
 
-    def on_validation_epoch_end(self):
-        # Aggregate results
-        outputs = self.trainer.callback_metrics
-        # Note: In newer PL versions, we'd use self.validation_step_outputs if we stored them,
-        # but simpler is to just rely on logged metrics or re-implement aggregation if needed for complex metrics.
-        # However, standard PL practice for epoch-level metrics like AUC often involves TorchMetrics.
-        # For now, to keep it simple and close to original, I'll assume we want to compute these manually 
-        # or we can use TorchMetrics which is cleaner. 
-        # Let's stick to a simple implementation first, but actually, 
-        # collecting all preds/targets in `validation_step` return is deprecated in newer PL.
-        # Best practice: Use TorchMetrics.
-        pass
+        # Update metrics
+        self.val_acc(outputs, targets)
+        self.val_f1(outputs, targets)
+        self.val_auroc(outputs, targets)
+
+        # Log metrics
+        self.log("val_acc", self.val_acc, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log("val_f1", self.val_f1, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log("val_auroc", self.val_auroc, on_epoch=True, prog_bar=True, batch_size=batch_size)
+
+        return loss
 
     def configure_optimizers(self):
         optimizer_config = self.config["training"]["optimizer"]
@@ -103,12 +100,16 @@ class DeepfakeTask(pl.LightningModule):
         weight_decay = float(optimizer_config["weight_decay"])
 
         if name == "adam":
-            optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=weight_decay)
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=lr,
+                weight_decay=weight_decay
+            )
         elif name == "sgd":
             optimizer = torch.optim.SGD(
-                self.parameters(), 
-                lr=lr, 
-                momentum=optimizer_config.get("momentum", 0.9), 
+                self.parameters(),
+                lr=lr,
+                momentum=optimizer_config.get("momentum", 0.9),
                 weight_decay=weight_decay
             )
         else:
@@ -116,7 +117,7 @@ class DeepfakeTask(pl.LightningModule):
 
         scheduler_config = self.config["training"]["scheduler"]
         scheduler_name = scheduler_config["name"]
-        
+
         if scheduler_name == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
@@ -136,11 +137,12 @@ class DeepfakeTask(pl.LightningModule):
                 "optimizer": optimizer,
                 "lr_scheduler": {
                     "scheduler": scheduler,
-                    "monitor": "val_f1" # Assumes we compute this
+                    "monitor": "val_f1"  # Assumes we compute this
                 }
             }
-            
+
         return optimizer
+
 
 class FocalLoss(nn.Module):
     def __init__(self, gamma: float = 2.0):
