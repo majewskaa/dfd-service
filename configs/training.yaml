@@ -50,6 +50,7 @@ logging:
     offline: false
 
 checkpointing:
+  enabled: false
   dir: "checkpoints"
   monitor: "val_loss"
   mode: "min"

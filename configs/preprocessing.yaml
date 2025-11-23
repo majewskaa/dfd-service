@@ -31,7 +31,7 @@ output:
     prefix: "shard"
     max_shard_size_mb: 1024
     image_codec: "webp"     # "webp" or "jpeg"
-    image_quality: 80        # 1-100
+    image_quality: 75        # 1-100
     index_filename: "index.csv"
-    clip_length: 50
-    clip_stride: 40
+    clip_length: 25
+    clip_stride: 20

@@ -110,17 +110,17 @@ def main():
     task = DeepfakeTask(base_model, config)
 
     # Callbacks
-    callbacks = [
-        ModelCheckpoint(
+    callbacks = [LearningRateMonitor(logging_interval="step")]
+
+    if config.get("checkpointing", {}).get("enabled", True):
+        callbacks.append(ModelCheckpoint(
             dirpath=config["checkpointing"]["dir"],
             filename="best-{epoch}-{val_loss:.2f}",
             monitor=config["checkpointing"]["monitor"],
             mode=config["checkpointing"]["mode"],
             save_top_k=1,
             save_last=True
-        ),
-        LearningRateMonitor(logging_interval="step")
-    ]
+        ))
 
     if "early_stopping" in config["training"]:
         es_config = config["training"]["early_stopping"]
