@@ -45,6 +45,9 @@ loss:
 
 logging:
   log_dir: "logs"
+  wandb:
+    project: "dfd-lab"
+    offline: false
 
 checkpointing:
   dir: "checkpoints"

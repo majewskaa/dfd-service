@@ -48,6 +48,12 @@ class ShardClipDataset(IterableDataset):
 
         self._entries = self._load_index()
 
+    def __len__(self) -> int:
+        """Return the number of samples."""
+        if self.max_samples:
+            return min(len(self._entries), self.max_samples)
+        return len(self._entries)
+
     def __iter__(self):
         """Iterate through samples."""
         worker_info = torch.utils.data.get_worker_info()

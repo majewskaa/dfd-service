@@ -13,6 +13,7 @@ from typing import Dict, Any
 import pytorch_lightning as pl
 import yaml
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
+from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
 import torch
 
@@ -130,6 +131,14 @@ def main():
             min_delta=es_config.get("min_delta", 0.0)
         ))
 
+    # Logger
+    wandb_config = config["logging"].get("wandb", {})
+    logger = WandbLogger(
+        project=wandb_config.get("project", "dfd-lab"),
+        offline=wandb_config.get("offline", False),
+        log_model=True
+    )
+
     # Trainer
     trainer_config = config.get("trainer", {})
     trainer = pl.Trainer(
@@ -137,6 +146,7 @@ def main():
         accelerator="auto",
         devices="auto",
         callbacks=callbacks,
+        logger=logger,
         default_root_dir=config["logging"]["log_dir"],
         gradient_clip_val=config["training"].get("grad_clip", 0.0),
         **trainer_config
