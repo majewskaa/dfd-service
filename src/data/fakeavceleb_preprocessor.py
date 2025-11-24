@@ -1,4 +1,5 @@
 import os
+import random
 from typing import Dict, Any, Tuple
 
 import pandas as pd
@@ -121,7 +122,8 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
                         video_files.append(os.path.join(root, file))
 
             # TODO: REMOVE THIS
-            # Limit to first 100 videos per category for testing
+            # Limit to 500 random videos per category for testing
+            random.shuffle(video_files)
             video_files = video_files[:500]
             
             # Process each video in the category with progress bar
