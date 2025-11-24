@@ -38,3 +38,24 @@ The `XceptionMaxFusionDetector` implements a multi-modal deepfake detection syst
 - **Pretrained Backbones**: Leverages ImageNet-pretrained Xception weights
 - **Flexible Input**: Supports variable-length video sequences
 - **Single-modality Support**: Can perform predictions using only video or audio when needed
+
+## CNNLSTMDetector (`cnn_lstm.py`)
+
+The `CNNLSTMDetector` implements a multi-modal deepfake detection system using ResNet models from `torchvision` for feature extraction and an LSTM for temporal modeling and prediction.
+
+### Architecture:
+- **Feature Extraction**: Uses pretrained ResNet models from `torchvision` to extract features from both video and audio modalities
+- **Feature Fusion**: Concatenates features from both modalities along the feature dimension
+- **Temporal Modeling**: Employs an LSTM to model temporal dependencies in the fused feature sequence
+- **Classification**: Final prediction through a fully connected layer
+
+### Processing Pipeline:
+1. **Feature Extraction**: Video and audio frames are processed through separate ResNet backbones to extract spatial features
+2. **Temporal Processing**: The LSTM processes the sequence of fused features to capture temporal patterns
+3. **Final Prediction**: The last hidden state of the LSTM is used for final classification
+
+### Key Benefits:
+- **Early Fusion**: Combines modalities at the feature level for joint learning
+- **Pretrained Features**: Leverages ImageNet-pretrained ResNet weights for robust feature extraction
+- **Temporal Awareness**: LSTM captures temporal dependencies across video frames
+- **Configurable Backbones**: Supports different ResNet architectures (ResNet18/ResNet50) for both modalities
