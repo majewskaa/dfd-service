@@ -5,7 +5,7 @@ data:
   val_index: "index_val.csv"
   
   # Data loading configuration
-  batch_size: 2  # Mini-batch size for training
+  batch_size: 1  # Mini-batch size for training
   num_workers: 1  # Number of data loading workers
   pin_memory: true
   frames_per_clip: 32 # Number of frames to sample per video clip
@@ -59,6 +59,7 @@ checkpointing:
 trainer:
   precision: "16-mixed" # Automatic Mixed Precision
   log_every_n_steps: 10
+  accumulate_grad_batches: 16
   fast_dev_run: false
 
 # Device configuration
