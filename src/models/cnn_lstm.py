@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 from typing import Tuple, Optional
-from base import BaseDetector
+from src.models.base import BaseDetector
 
 
 class FeatureExtractor(nn.Module):
