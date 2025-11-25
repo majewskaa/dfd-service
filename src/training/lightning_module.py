@@ -93,6 +93,9 @@ class DeepfakeTask(pl.LightningModule):
 
         return loss
 
+    def test_step(self, batch, batch_idx):
+        return self.validation_step(batch, batch_idx)
+
     def configure_optimizers(self):
         optimizer_config = self.config["training"]["optimizer"]
         name = optimizer_config["name"]
