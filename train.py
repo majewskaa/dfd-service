@@ -20,6 +20,8 @@ import torch
 from src.data.shard_dataset import ShardClipDataset
 from src.models.base import BaseDetector
 from src.training.lightning_module import DeepfakeTask
+from src.callbacks.memory_monitor import CUDAMemoryMonitor
+
 
 
 def parse_args():
@@ -110,7 +112,11 @@ def main():
     task = DeepfakeTask(base_model, config)
 
     # Callbacks
-    callbacks = [LearningRateMonitor(logging_interval="step")]
+
+    callbacks = [
+        LearningRateMonitor(logging_interval="step"),
+        CUDAMemoryMonitor()
+    ]
 
     if config.get("checkpointing", {}).get("enabled", True):
         callbacks.append(ModelCheckpoint(

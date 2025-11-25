@@ -182,3 +182,4 @@ data/processed/
 
 /logs/
 /wandb/
+/checkpoints/
