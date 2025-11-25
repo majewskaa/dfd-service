@@ -34,7 +34,7 @@ training:
   
   optimizer:
     name: "adam"
-    learning_rate: 0.0001
+    learning_rate: 0.001
     weight_decay: 0.0001
   
   scheduler:
@@ -43,7 +43,7 @@ training:
 
 loss:
   name: "focal"
-  focal_gamma: 2.0
+  focal_gamma: 3.0
 
 logging:
   log_dir: "logs"

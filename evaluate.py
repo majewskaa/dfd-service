@@ -151,6 +151,10 @@ def main():
     print(f"FN: {cm[1][0]}\tTP: {cm[1][1]}")
     
     print(f"\nAUC-ROC: {metrics['auc_roc']:.4f}")
+    
+    print(f"Mean Predicted Probability (Class 1): {all_probs[:, 1].mean():.4f}")
+    print(f"Min Prob: {all_probs[:, 1].min():.4f}, Max Prob: {all_probs[:, 1].max():.4f}")
+    
     print("="*80 + "\n")
 
     # Save Results
