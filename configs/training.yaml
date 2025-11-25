@@ -16,8 +16,8 @@ data:
 
 model:
   # Model type - can be extended to support any BaseDetector subclass
-  name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", or any other detector in src/models
-  module_path: "src.models.xception"  # Python import path to model module
+  name: "CNNLSTMDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", or any other detector in src/models
+  module_path: "src.models.cnn_lstm"  # Python import path to model module
   num_classes: 2
   
   # Model-specific parameters (passed to __init__ as kwargs)
