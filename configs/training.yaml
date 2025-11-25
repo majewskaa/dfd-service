@@ -5,7 +5,7 @@ data:
   val_index: "index_val.csv"
   
   # Data loading configuration
-  batch_size: 1  # Mini-batch size for training
+  batch_size: 16  # Mini-batch size for training
   num_workers: 1  # Number of data loading workers
   pin_memory: true
   frames_per_clip: 32 # Number of frames to sample per video clip
@@ -41,7 +41,8 @@ training:
     min_lr: 0.000001
 
 loss:
-  name: "cross_entropy"
+  name: "focal"
+  focal_gamma: 2.0
 
 logging:
   log_dir: "logs"
