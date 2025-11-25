@@ -57,7 +57,7 @@ class FeatureExtractor(nn.Module):
 
 
 class CNNLSTMDetector(BaseDetector):
-    def __init__(self, hidden_size=512, num_classes=2, backbone_video="resnet18", backbone_audio="resnet18"):
+    def __init__(self, hidden_size=512, num_classes=2, backbone_video="resnet18", backbone_audio="resnet18", pos_freq=None):
         super().__init__(num_classes)
         
         # Use torchvision CNNs for both modalities
@@ -73,6 +73,21 @@ class CNNLSTMDetector(BaseDetector):
         )
 
         self.fc = nn.Linear(hidden_size, num_classes)
+        
+        # Bias Initialization for Imbalanced Classes
+        if pos_freq is not None and num_classes == 2:
+            import math
+            # Assume class 1 is positive (Fake) and class 0 is negative (Real)
+            # b1 - b0 = log(pi / (1 - pi))
+            # We set b0 = 0, b1 = log(pos_freq / (1 - pos_freq))
+            # Or symmetric: b1 = log(pi/(1-pi))/2, b0 = -b1
+            
+            bias_val = math.log(pos_freq / (1.0 - pos_freq))
+            # Set bias for class 1
+            with torch.no_grad():
+                self.fc.bias[1] = bias_val / 2
+                self.fc.bias[0] = -bias_val / 2
+            print(f"Initialized output bias for pos_freq={pos_freq:.2f}: {self.fc.bias.data}")
 
     def forward(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> torch.Tensor:
         B, T, C_vid, H, W = image_input.shape

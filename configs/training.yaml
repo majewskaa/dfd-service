@@ -21,7 +21,8 @@ model:
   num_classes: 2
   
   # Model-specific parameters (passed to __init__ as kwargs)
-  model_params: { }
+  model_params:
+    pos_freq: 0.72
 
 training:
   epochs: 50
