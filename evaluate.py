@@ -16,6 +16,9 @@ from torch.utils.data import DataLoader
 import importlib
 import sys
 import os
+import json
+import numpy as np
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
 # Add src to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -110,9 +113,55 @@ def main():
         limit_test_batches=eval_config.get("limit_batches")
     )
 
-    # Evaluate
+    # Predict
     print("Starting evaluation...")
-    trainer.test(task, dataloaders=test_loader)
+    predictions = trainer.predict(task, dataloaders=test_loader)
+    
+    # Aggregate results
+    all_probs = torch.cat([p["probs"] for p in predictions])
+    all_targets = torch.cat([p["targets"] for p in predictions])
+    
+    # Move to CPU/Numpy
+    all_probs = all_probs.cpu().numpy()
+    all_targets = all_targets.cpu().numpy()
+    all_preds = all_probs.argmax(axis=1)
+    
+    # Calculate Metrics
+    metrics = {
+        "classification_report": classification_report(all_targets, all_preds, output_dict=True),
+        "confusion_matrix": confusion_matrix(all_targets, all_preds).tolist(),
+    }
+    
+    try:
+        metrics["auc_roc"] = roc_auc_score(all_targets, all_probs[:, 1])
+    except Exception as e:
+        print(f"Warning: Could not calculate AUC-ROC: {e}")
+        metrics["auc_roc"] = 0.0
+
+    # Print Report
+    print("\n" + "="*80)
+    print("DETAILED EVALUATION REPORT")
+    print("="*80)
+    print(f"\nClassification Report:\n")
+    print(classification_report(all_targets, all_preds))
+    
+    print("\nConfusion Matrix:")
+    cm = np.array(metrics["confusion_matrix"])
+    print(f"TN: {cm[0][0]}\tFP: {cm[0][1]}")
+    print(f"FN: {cm[1][0]}\tTP: {cm[1][1]}")
+    
+    print(f"\nAUC-ROC: {metrics['auc_roc']:.4f}")
+    print("="*80 + "\n")
+
+    # Save Results
+    output_dir = Path(config["evaluation"].get("output_dir", "evaluation_results"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    results_file = output_dir / "metrics.json"
+    with open(results_file, "w") as f:
+        json.dump(metrics, f, indent=4)
+        
+    print(f"Results saved to: {results_file}")
 
 if __name__ == "__main__":
     main()

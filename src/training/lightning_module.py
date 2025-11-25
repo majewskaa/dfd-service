@@ -96,6 +96,12 @@ class DeepfakeTask(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         return self.validation_step(batch, batch_idx)
 
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        video, audio, targets = self._prepare_batch(batch)
+        outputs = self(video, audio)
+        probs = torch.softmax(outputs, dim=1)
+        return {"probs": probs, "targets": targets}
+
     def configure_optimizers(self):
         optimizer_config = self.config["training"]["optimizer"]
         name = optimizer_config["name"]
