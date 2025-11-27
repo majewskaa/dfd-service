@@ -62,6 +62,10 @@ class ShardClipDataset(IterableDataset):
         shard_to_entries = self._group_entries_by_shard()
         shards = list(shard_to_entries.keys())
         
+        # Shuffle shards to randomize order
+        import random
+        random.shuffle(shards)
+        
         # Handle multi-processing
         if worker_info is not None:
             # Split shards among workers
@@ -73,8 +77,11 @@ class ShardClipDataset(IterableDataset):
         
         for shard_name in shards:
             entries = shard_to_entries[shard_name]
+            # Shuffle entries within the shard
+            random.shuffle(entries)
+            
             shard_path = os.path.join(self.shards_dir, shard_name)
-
+            
             with tarfile.open(shard_path, mode="r") as tar:
                 # Lazy member lookup: only create dict when needed, use getmember() for individual lookups
                 # This avoids loading all members into memory at once
