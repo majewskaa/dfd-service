@@ -106,49 +106,55 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
         self.sample_index = 0
         self._initialize_output_storage(output_dir)
 
-        # Process each category
+        # 1. Collect all video files from all categories
+        all_video_files = []
+        print("Collecting video files...")
+        
         for category in ['A', 'B', 'C', 'D']:
             category_dir = os.path.join(input_dir, self.dataset_name, self.category_mapping[category])
             if not os.path.exists(category_dir):
                 continue
 
-            print(f"\nProcessing category {category} ({self.category_mapping[category]})...")
-
             # Get list of all video files in the category
-            video_files = []
+            files_in_category = []
             for root, _, files in os.walk(category_dir):
                 for file in files:
                     if file.endswith('.mp4'):
-                        video_files.append(os.path.join(root, file))
-
-            # TODO: REMOVE THIS
-            # Limit to 500 random videos per category for testing
-            random.shuffle(video_files)
-            video_files = video_files[:500]
+                        files_in_category.append(os.path.join(root, file))
             
-            # Process each video in the category with progress bar
-            for video_path in tqdm(video_files, desc=f"Category {category}", unit="video"):
-                try:
-                    # Get label and metadata
-                    label, metadata = self.get_video_label(video_path)
+            # TODO: REMOVE THIS (Limit for testing/debugging)
+            random.shuffle(files_in_category)
+            files_in_category = files_in_category[:500]
+            
+            all_video_files.extend(files_in_category)
 
-                    # Process video
-                    result = self.process_video(video_path, label)
-                    if result is not None:
-                        # Add metadata to result
-                        result['metadata'].update(metadata)
+        # 2. Global Shuffle to ensure mixed shards
+        print(f"Found {len(all_video_files)} total videos. Shuffling...")
+        random.shuffle(all_video_files)
+        
+        # 3. Process all videos
+        for video_path in tqdm(all_video_files, desc="Processing Dataset", unit="video"):
+            try:
+                # Get label and metadata
+                label, metadata = self.get_video_label(video_path)
 
-                        # Save result incrementally
-                        self._save_incremental(result, output_dir)
+                # Process video
+                result = self.process_video(video_path, label)
+                if result is not None:
+                    # Add metadata to result
+                    result['metadata'].update(metadata)
 
-                        # Update statistics
-                        self._update_statistics(stats, result['metadata'])
-                        stats['total_samples'] += 1
+                    # Save result incrementally
+                    self._save_incremental(result, output_dir)
 
-                except Exception as e:
-                    # Log and continue with next video
-                    print(f"\nError processing {video_path}: {str(e)}")
-                    continue
+                    # Update statistics
+                    self._update_statistics(stats, result['metadata'])
+                    stats['total_samples'] += 1
+
+            except Exception as e:
+                # Log and continue with next video
+                print(f"\nError processing {video_path}: {str(e)}")
+                continue
 
         self._finalize_output_storage(output_dir)
         self.save_dataset_statistics(stats, output_dir)
