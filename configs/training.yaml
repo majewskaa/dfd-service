@@ -10,6 +10,10 @@ data:
   pin_memory: true
   frames_per_clip: 32 # Number of frames to sample per video clip
   
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  
   # Optional: limit samples for debugging
   max_train_samples: null  # Set to integer to limit training samples
   max_val_samples: null    # Set to integer to limit validation samples

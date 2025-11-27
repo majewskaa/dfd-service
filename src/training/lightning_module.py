@@ -49,6 +49,15 @@ class DeepfakeTask(pl.LightningModule):
         if video_frames.dim() == 5:
             video_frames = video_frames.permute(0, 1, 4, 2, 3)
         video_frames = video_frames.float() / 255.0
+        
+        # Normalization from config
+        norm_config = self.config["data"].get("normalization", {})
+        mean_val = norm_config.get("mean", [0.485, 0.456, 0.406])
+        std_val = norm_config.get("std", [0.229, 0.224, 0.225])
+        
+        mean = torch.tensor(mean_val, device=video_frames.device).view(1, 3, 1, 1, 1)
+        std = torch.tensor(std_val, device=video_frames.device).view(1, 3, 1, 1, 1)
+        video_frames = (video_frames - mean) / std
 
         audio_mel = batch["audio_frames"]
         if audio_mel.dim() == 4:
