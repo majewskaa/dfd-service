@@ -1,8 +1,8 @@
 data:
   input_dir: "data/raw"
   output_dir: "data/processed"
-  train_split: 0.8
-  val_split: 0.2
+  train_split: 0.0
+  val_split: 1.0
   random_seed: 42
 
 preprocessing:
@@ -22,7 +22,7 @@ preprocessing:
     n_mels: 64
     n_fft: 1024
     hop_length: 256
-    mel_overlap_ratio: 0.5  # Overlap ratio for mel spectrograms (0.0-1.0)
+    mel_overlap_ratio: 0.1  # Overlap ratio for mel spectrograms (0.0-1.0)
     target_mel_size: [299, 299]  # Target size for resizing mel spectrograms (height, width)
 
 output:
@@ -33,5 +33,5 @@ output:
     image_codec: "webp"     # "webp" or "jpeg"
     image_quality: 90        # 1-100
     index_filename: "index.csv"
-    clip_length: 16
-    clip_stride: 8
+    clip_length: 25
+    clip_stride: 20

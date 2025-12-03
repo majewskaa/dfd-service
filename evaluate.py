@@ -1,277 +1,171 @@
 #!/usr/bin/env python3
 """
-Evaluation Script for Deepfake Detection Models
-
-This script evaluates trained models on test datasets and generates
-comprehensive metrics and visualizations.
+Evaluation Script for Deepfake Detection Models (PyTorch Lightning)
 
 Usage:
-    python evaluate.py --checkpoint checkpoints/best_model.pth
-    
-    # With custom test configuration
-    python evaluate.py --checkpoint checkpoints/best_model.pth --config configs/evaluation.yaml
+    python evaluate.py
+    python evaluate.py --config configs/my_eval_config.yaml
 """
 
 import argparse
 import yaml
 import torch
+import pytorch_lightning as pl
 from pathlib import Path
+from torch.utils.data import DataLoader
+import importlib
 import sys
 import os
 import json
-import importlib
-from typing import Dict, Any
-from tqdm import tqdm
+import numpy as np
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
-# Add src directory to Python path
+# Add src to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.data.shard_dataset import ShardClipDataset
+from src.training.lightning_module import DeepfakeTask
 from src.models.base import BaseDetector
-from src.training.metrics import MetricsCalculator
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Evaluate deepfake detection model",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        required=True,
-        help="Path to model checkpoint (.pth file)"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/evaluation.yaml",
-        help="Path to evaluation configuration file (default: configs/evaluation.yaml)"
-    )
-    parser.add_argument(
-        "--test-index",
-        type=str,
-        default="index_val.csv",
-        help="Test index file name (default: uses validation set)"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="Device to use (overrides config). Options: cuda, cpu, cuda:0, etc."
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="evaluation_results",
-        help="Directory to save evaluation results"
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="configs/evaluation.yaml", help="Path to config file")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Override checkpoint path")
     return parser.parse_args()
 
-
 def load_model_class(module_path: str, class_name: str):
-    """Dynamically load model class from module path."""
     try:
         module = importlib.import_module(module_path)
-        model_class = getattr(module, class_name)
-        return model_class
+        return getattr(module, class_name)
     except (ImportError, AttributeError) as e:
         raise RuntimeError(f"Failed to load model class '{class_name}' from '{module_path}': {e}")
 
-
-def load_model(checkpoint_path: str, device: str) -> BaseDetector:
-    """Load model from checkpoint.
-    
-    Args:
-        checkpoint_path: Path to checkpoint file
-        device: Device to load model on
-        
-    Returns:
-        Loaded model
-    """
-    print(f"Loading checkpoint from: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    
-    # Get model configuration from checkpoint
-    config = checkpoint["config"]
+def create_model(config: dict) -> BaseDetector:
     model_config = config["model"]
-    
-    # Load model class dynamically
     ModelClass = load_model_class(model_config["module_path"], model_config["name"])
-    
-    # Create model instance
-    model_params = model_config.get("model_params", {})
-    model = ModelClass(num_classes=model_config["num_classes"], **model_params)
-    
-    # Load state dict
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model = model.to(device)
-    model.eval()
-    
-    print(f"✓ Model loaded: {model_config['name']}")
-    print(f"✓ Checkpoint epoch: {checkpoint.get('epoch', 'unknown')}")
-    print(f"✓ Best metric: {checkpoint.get('best_metric', 'unknown')}")
-    
+    model = ModelClass(num_classes=model_config["num_classes"], **model_config.get("model_params", {}))
     return model
 
-
-def prepare_batch(sample: Dict[str, Any], device: str):
-    """Prepare batch data for multi-modal model."""
-    # Extract video frames
-    video_frames = sample["data"]
-    if video_frames.dim() == 4:
-        video_frames = video_frames.permute(0, 3, 1, 2)
-        video_frames = video_frames.unsqueeze(0)
-    video_frames = video_frames.float() / 255.0
-    
-    # Extract audio mel spectrogram
-    audio_mel = sample["audio_mel_frames"]
-    if audio_mel.dim() == 3:
-        audio_mel = audio_mel.unsqueeze(0).unsqueeze(2)
-    
-    # Extract label
-    label = torch.tensor([sample["label"]], dtype=torch.long)
-    
-    return video_frames.to(device), audio_mel.to(device), label.to(device)
-
-
-def evaluate_model(model: BaseDetector, test_loader, device: str, config: Dict[str, Any]):
-    """Evaluate model on test dataset.
-    
-    Args:
-        model: Trained model
-        test_loader: Test data loader
-        device: Device to run evaluation on
-        config: Evaluation configuration
-        
-    Returns:
-        Dictionary of metrics and predictions
-    """
-    from sklearn.metrics import (
-        accuracy_score, precision_score, recall_score, 
-        f1_score, roc_auc_score, confusion_matrix
-    )
-    
-    all_preds = []
-    all_targets = []
-    all_probs = []
-    
-    print("Evaluating model...")
-    with torch.no_grad():
-        for sample in tqdm(test_loader, desc="Evaluating"):
-            # Prepare batch
-            image_input, audio_input, target = prepare_batch(sample, device)
-            
-            # Forward pass
-            output = model(image_input, audio_input)
-            probs = torch.softmax(output, dim=1)
-            pred = output.argmax(dim=1)
-            
-            # Collect predictions
-            all_preds.append(pred.cpu())
-            all_targets.append(target.squeeze().cpu())
-            all_probs.append(probs.cpu())
-    
-    # Concatenate all predictions
-    all_preds = torch.cat(all_preds).numpy()
-    all_targets = torch.cat(all_targets).numpy()
-    all_probs = torch.cat(all_probs).numpy()
-    
-    # Calculate metrics
-    metrics = {
-        "accuracy": accuracy_score(all_targets, all_preds),
-        "precision": precision_score(all_targets, all_preds, average="binary", zero_division=0),
-        "recall": recall_score(all_targets, all_preds, average="binary", zero_division=0),
-        "f1_score": f1_score(all_targets, all_preds, average="binary", zero_division=0),
-        "confusion_matrix": confusion_matrix(all_targets, all_preds).tolist()
-    }
-    
-    # Add AUC-ROC if probabilities available
-    try:
-        metrics["auc_roc"] = roc_auc_score(all_targets, all_probs[:, 1])
-    except:
-        metrics["auc_roc"] = 0.0
-    
-    return metrics, all_preds, all_targets, all_probs
-
-
-def save_results(metrics: Dict[str, Any], output_dir: Path):
-    """Save evaluation results to files."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save metrics
-    metrics_file = output_dir / "metrics.json"
-    with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=2)
-    
-    print(f"\n✓ Metrics saved to: {metrics_file}")
-
-
-def print_metrics(metrics: Dict[str, Any]):
-    """Print evaluation metrics in a readable format."""
-    print("\n" + "="*70)
-    print("EVALUATION RESULTS")
-    print("="*70)
-    for metric, value in metrics.items():
-        if metric != "confusion_matrix":
-            print(f"{metric:15s}: {value:.4f}")
-    
-    if "confusion_matrix" in metrics:
-        print("\nConfusion Matrix:")
-        cm = metrics["confusion_matrix"]
-        print(f"  TN: {cm[0][0]:4d}  |  FP: {cm[0][1]:4d}")
-        print(f"  FN: {cm[1][0]:4d}  |  TP: {cm[1][1]:4d}")
-    print("="*70 + "\n")
-
-
 def main():
-    """Main evaluation pipeline."""
-    # Parse arguments
     args = parse_args()
     
-    # Load evaluation configuration (if exists)
-    config = {}
-    if Path(args.config).exists():
-        with open(args.config, "r") as f:
-            config = yaml.safe_load(f)
-    
-    # Set device
-    device = args.device or config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        print("Warning: CUDA not available, falling back to CPU")
-        device = "cpu"
-    print(f"✓ Using device: {device}")
-    
-    # Load model
-    model = load_model(args.checkpoint, device)
-    
-    # Load test dataset
-    checkpoint = torch.load(args.checkpoint, map_location="cpu")
-    data_config = checkpoint["config"]["data"]
-    shards_dir = data_config["shards_dir"]
-    
-    print(f"\nLoading test dataset from: {shards_dir}")
-    test_loader = ShardClipDataset(
-        shards_dir=shards_dir,
-        index_filename=args.test_index,
-        target_device=device,
-        max_samples=None
-    )
-    print("✓ Test dataset loaded")
-    
-    # Evaluate model
-    metrics, preds, targets, probs = evaluate_model(model, test_loader, device, config)
-    
-    # Print metrics
-    print_metrics(metrics)
-    
-    # Save results
-    output_dir = Path(args.output_dir)
-    save_results(metrics, output_dir)
-    
-    print(f"Evaluation completed! Results saved to: {output_dir}")
+    if not Path(args.config).exists():
+        print(f"Error: Config file not found: {args.config}")
+        sys.exit(1)
 
+    # Load config
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+        
+    # Overrides
+    checkpoint_path = args.checkpoint or config["evaluation"].get("checkpoint_path")
+    if not checkpoint_path:
+        print("Error: No checkpoint path specified in config or arguments.")
+        sys.exit(1)
+        
+    # Optimization
+    torch.set_float32_matmul_precision('medium')
+    pl.seed_everything(config.get("seed", 42))
+
+    # Data
+    data_config = config["data"]
+    print(f"Loading test data using index: {data_config['test_index']}")
+    
+    test_dataset = ShardClipDataset(
+        shards_dir=data_config["shards_dir"],
+        index_filename=data_config["test_index"],
+        target_device="cpu", 
+        max_samples=None, 
+        frames_per_clip=data_config.get("frames_per_clip", 32)
+    )
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=data_config.get("batch_size", 16),
+        num_workers=data_config.get("num_workers", 4),
+        pin_memory=data_config.get("pin_memory", True),
+        collate_fn=ShardClipDataset.collate_fn,
+        drop_last=False
+    )
+
+    # Model
+    print(f"Loading model from {checkpoint_path}")
+    base_model = create_model(config)
+    
+    # Load from checkpoint
+    task = DeepfakeTask.load_from_checkpoint(
+        checkpoint_path, 
+        model=base_model, 
+        config=config,
+        strict=False 
+    )
+
+    # Trainer
+    eval_config = config["evaluation"]
+    device = eval_config.get("device", "auto")
+    accelerator = device if device != "auto" else "auto"
+    
+    trainer = pl.Trainer(
+        accelerator=accelerator,
+        devices=1,
+        logger=False, 
+        enable_checkpointing=False,
+        limit_test_batches=eval_config.get("limit_batches")
+    )
+
+    # Predict
+    print("Starting evaluation...")
+    predictions = trainer.predict(task, dataloaders=test_loader)
+    
+    # Aggregate results
+    all_probs = torch.cat([p["probs"] for p in predictions])
+    all_targets = torch.cat([p["targets"] for p in predictions])
+    
+    # Move to CPU/Numpy
+    all_probs = all_probs.cpu().numpy()
+    all_targets = all_targets.cpu().numpy()
+    all_preds = all_probs.argmax(axis=1)
+    
+    # Calculate Metrics
+    metrics = {
+        "classification_report": classification_report(all_targets, all_preds, output_dict=True),
+        "confusion_matrix": confusion_matrix(all_targets, all_preds).tolist(),
+    }
+    
+    try:
+        metrics["auc_roc"] = roc_auc_score(all_targets, all_probs[:, 1])
+    except Exception as e:
+        print(f"Warning: Could not calculate AUC-ROC: {e}")
+        metrics["auc_roc"] = 0.0
+
+    # Print Report
+    print("\n" + "="*80)
+    print("DETAILED EVALUATION REPORT")
+    print("="*80)
+    print(f"\nClassification Report:\n")
+    print(classification_report(all_targets, all_preds))
+    
+    print("\nConfusion Matrix:")
+    cm = np.array(metrics["confusion_matrix"])
+    print(f"TN: {cm[0][0]}\tFP: {cm[0][1]}")
+    print(f"FN: {cm[1][0]}\tTP: {cm[1][1]}")
+    
+    print(f"\nAUC-ROC: {metrics['auc_roc']:.4f}")
+    
+    print(f"Mean Predicted Probability (Class 1): {all_probs[:, 1].mean():.4f}")
+    print(f"Min Prob: {all_probs[:, 1].min():.4f}, Max Prob: {all_probs[:, 1].max():.4f}")
+    
+    print("="*80 + "\n")
+
+    # Save Results
+    output_dir = Path(config["evaluation"].get("output_dir", "evaluation_results"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    results_file = output_dir / "metrics.json"
+    with open(results_file, "w") as f:
+        json.dump(metrics, f, indent=4)
+        
+    print(f"Results saved to: {results_file}")
 
 if __name__ == "__main__":
-    main() 
+    main()

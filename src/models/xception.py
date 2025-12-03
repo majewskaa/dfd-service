@@ -17,10 +17,10 @@ class XceptionMaxFusionDetector(BaseDetector):
         super().__init__(num_classes)
 
         # --- Video Predictor (Xception from timm) ---
-        self.video_model = timm.create_model('xception', pretrained=True, num_classes=num_classes)
+        self.video_model = timm.create_model('legacy_xception', pretrained=True, num_classes=num_classes)
 
         # --- Audio Predictor (Xception from timm) ---
-        self.audio_model = timm.create_model('xception', pretrained=True, num_classes=num_classes, in_chans=1)
+        self.audio_model = timm.create_model('legacy_xception', pretrained=True, num_classes=num_classes, in_chans=1)
 
     def forward(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> torch.Tensor:
         """

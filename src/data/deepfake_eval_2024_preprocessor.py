@@ -8,23 +8,23 @@ from tqdm import tqdm
 from src.data.base_preprocessor import DataPreprocessor
 
 
-class FakeAVCelebPreprocessor(DataPreprocessor):
-    """Preprocessor for the FakeAVCeleb dataset."""
+class DeepfakeEval2024Preprocessor(DataPreprocessor):
+    """Preprocessor for the Deepfake Eval 2024 dataset."""
 
     def __init__(self, config: Dict[str, Any]):
-        """Initialize the FakeAVCeleb preprocessor.
+        """Initialize the Deepfake Eval 2024 preprocessor.
         
         Args:
             config: Configuration dictionary containing preprocessing parameters
         """
         super().__init__(config)
-        self.dataset_name = "FakeAVCeleb_v1.2"
+        self.dataset_name = "Deepfake_Eval_2024"
         self.metadata_filename = "meta_data.csv"
         self.metadata = None
         self.category_mapping = {
             'A': 'RealVideo-RealAudio',
-            'B': 'RealVideo-FakeAudio',
-            'C': 'FakeVideo-RealAudio',
+            'B': 'FakeVideo-RealAudio',
+            'C': 'RealVideo-FakeAudio',
             'D': 'FakeVideo-FakeAudio'
         }
 
@@ -52,33 +52,33 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
         filename = os.path.basename(video_path)
 
         # Find matching row in metadata
-        row = self.metadata[self.metadata['filename'] == filename]
+        row = self.metadata[self.metadata['Filename'] == filename]
         if len(row) == 0:
+            # Try matching without extension if needed, or just fail
+            # Some datasets might have inconsistencies
             raise ValueError(f"No metadata found for video: {filename}")
 
         row = row.iloc[0]
 
         # Determine label (0 for real, 1 for fake)
+        # Category A is Real, others are Fake
         label = 0 if row['category'] == 'A' else 1
 
         # Create metadata dictionary
+        # We include available fields from the CSV
         metadata = {
-            'source': row['source'],
-            'target1': row['target1'],
-            'target2': row['target2'],
-            'method': row['method'],
+            'filename': row['Filename'],
+            'date': row.get('Date', ''),
+            'video_ground_truth': row.get('Video Ground Truth', ''),
+            'audio_ground_truth': row.get('Audio Ground Truth', ''),
             'category': row['category'],
-            'type': row['type'],
-            'gender': row['gender'],
-            'race': row['race'],
-            'filename': row['filename'],
-            'path': row['path']
+            'path': video_path
         }
 
         return label, metadata
 
     def process_dataset(self, input_dir: str, output_dir: str):
-        """Process the FakeAVCeleb dataset.
+        """Process the Deepfake Eval 2024 dataset.
         
         Args:
             input_dir: Directory containing the dataset
@@ -97,39 +97,46 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
         stats = {
             'total_samples': 0,
             'categories': {},
-            'methods': {},
-            'gender_distribution': {},
-            'race_distribution': {}
+            'video_ground_truth': {},
+            'audio_ground_truth': {}
         }
 
         # Initialize shards-only storage
         self.sample_index = 0
         self._initialize_output_storage(output_dir)
 
-        # 1. Collect all video files from all categories
-        all_video_files = []
+        # 1. Collect all video files
         print("Collecting video files...")
+        video_data_dir = os.path.join(input_dir, self.dataset_name, "video-data")
         
-        for category in ['A', 'B', 'C', 'D']:
-            category_dir = os.path.join(input_dir, self.dataset_name, self.category_mapping[category])
-            if not os.path.exists(category_dir):
-                continue
+        if not os.path.exists(video_data_dir):
+             raise FileNotFoundError(f"Video data directory not found: {video_data_dir}")
 
-            # Get list of all video files in the category
-            files_in_category = []
-            for root, _, files in os.walk(category_dir):
-                for file in files:
-                    if file.endswith('.mp4'):
-                        files_in_category.append(os.path.join(root, file))
+        all_video_files = []
+        
+        # Iterate through metadata to find files, ensuring we only process files we have metadata for
+        # and that exist on disk
+        files_by_category = {}
+        
+        for _, row in self.metadata.iterrows():
+            filename = row['Filename']
+            category = row['category']
+            file_path = os.path.join(video_data_dir, filename)
             
-            # TODO: REMOVE THIS (Limit for testing/debugging)
-            random.shuffle(files_in_category)
-            files_in_category = files_in_category[:500]
-            
-            all_video_files.extend(files_in_category)
+            if os.path.exists(file_path):
+                if category not in files_by_category:
+                    files_by_category[category] = []
+                files_by_category[category].append(file_path)
+
+        for category, files in files_by_category.items():
+            # TODO: remove this limit after testing
+            # Limit to 5 per category for testing
+            selected_files = files[:5]
+            all_video_files.extend(selected_files)
+            print(f"Category {category}: Selected {len(selected_files)}/{len(files)} videos")
 
         # 2. Global Shuffle to ensure mixed shards
-        print(f"Found {len(all_video_files)} total videos. Shuffling...")
+        print(f"Found {len(all_video_files)} total videos matching metadata. Shuffling...")
         random.shuffle(all_video_files)
         
         # 3. Process all videos
@@ -167,17 +174,13 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
             metadata: Metadata from processed sample
         """
         # Update category statistics
-        category = metadata['category']
+        category = metadata.get('category', 'Unknown')
         stats['categories'][category] = stats['categories'].get(category, 0) + 1
 
-        # Update method statistics
-        method = metadata['method']
-        stats['methods'][method] = stats['methods'].get(method, 0) + 1
-
-        # Update gender statistics
-        gender = metadata['gender']
-        stats['gender_distribution'][gender] = stats['gender_distribution'].get(gender, 0) + 1
-
-        # Update race statistics
-        race = metadata['race']
-        stats['race_distribution'][race] = stats['race_distribution'].get(race, 0) + 1
+        # Update video ground truth statistics
+        vgt = metadata.get('video_ground_truth', 'Unknown')
+        stats['video_ground_truth'][vgt] = stats['video_ground_truth'].get(vgt, 0) + 1
+        
+        # Update audio ground truth statistics
+        agt = metadata.get('audio_ground_truth', 'Unknown')
+        stats['audio_ground_truth'][agt] = stats['audio_ground_truth'].get(agt, 0) + 1

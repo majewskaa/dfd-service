@@ -40,12 +40,33 @@ def to_bgr(frame: np.ndarray) -> np.ndarray:
 
 
 def play_clip(clip: torch.Tensor, title: str, fps: int = 20) -> None:
-    # clip: Tensor[T,H,W,3], uint8 on any device
+    # clip: Tensor[T,H,W,3] or Tensor[1,T,H,W,3], uint8 on any device
     t = int(1000 / max(1, fps))
     clip_np = clip.detach().cpu().numpy()
+    
+    # Remove batch dimension if present
+    if clip_np.ndim == 5 and clip_np.shape[0] == 1:
+        clip_np = clip_np[0]
+    elif clip_np.ndim != 4:
+        raise ValueError(f"Expected clip with 4 or 5 dimensions (T,H,W,3 or batch,T,H,W,3), got shape {clip_np.shape}")
+    
+    # Validate shape
+    if clip_np.ndim != 4 or clip_np.shape[-1] != 3:
+        raise ValueError(f"Expected clip shape (T, H, W, 3), got {clip_np.shape}")
+    
     for i, frame in enumerate(clip_np):
         frame = frame.astype(np.uint8)
+        
+        # Validate frame dimensions
+        if frame.shape[0] <= 0 or frame.shape[1] <= 0:
+            raise ValueError(f"Invalid frame dimensions: {frame.shape}")
+        
         bgr = to_bgr(frame)
+        
+        # Final validation before imshow
+        if bgr.ndim != 3 or bgr.shape[2] != 3 or bgr.dtype != np.uint8:
+            raise ValueError(f"Invalid BGR frame: shape={bgr.shape}, dtype={bgr.dtype}")
+        
         info = f"{title} | frame {i + 1}/{len(clip_np)} | q:quit n:next p:pause"
         bgr = draw_overlay(bgr, info)
         cv2.imshow("shard_viewer", bgr)
@@ -78,14 +99,22 @@ def main(shards_dir: str, index_filename: str, device: str, max_samples: Optiona
 
     try:
         for idx, sample in enumerate(ds):
-            has_audio = "audio_mel_frames" in sample
-            data: torch.Tensor = sample["data"]
+            has_audio = "audio_frames" in sample
+            data: torch.Tensor = sample["video_frames"]
+            
+            # Remove batch dimension if present (dataset returns [batch_size, T, H, W, 3])
+            if data.ndim == 5 and data.shape[0] == 1:
+                data = data.squeeze(0)
+            elif data.ndim == 5:
+                raise ValueError(f"Expected batch_size=1, got batch_size={data.shape[0]}")
+            
             label = int(sample["label"]) if not isinstance(sample["label"], torch.Tensor) else int(
                 sample["label"].item())
-            meta = sample.get("metadata", {})
+            meta = sample.get("metadata", {})[0]
             print(sample)
             title = f"sample {meta.get('id', idx)} | label={label} | frames={meta.get('num_frames', data.shape[0])} | audio={'yes' if has_audio else 'no'}"
             play_clip(data, title=title, fps=fps)
+
             # After clip ends, wait for next or quit
             print(title)
             print("Press 'n' for next, 'q' to quit, 'p' to replay")
