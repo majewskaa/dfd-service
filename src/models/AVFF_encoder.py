@@ -352,7 +352,8 @@ class EncoderPretrain(nn.Module):
             "adv_a": adv_a.detach(),
             "adv_v": adv_v.detach(),
             "contrast": loss_contrast.detach(),
-            "total": total_loss.detach()
+            "total": total_loss.detach(),
+            "loss_g": total_loss
         }
 
     def save_encoders(self, path: str):

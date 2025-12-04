@@ -12,7 +12,7 @@ def parse_args():
         "--dataset",
         type=str,
         default="fakeavceleb",
-        choices=["fakeavceleb", "deepfake_eval_2024"],
+        choices=["fakeavceleb", "deepfake_eval_2024", "pretrain"],
         help="Dataset to preprocess"
     )
     return parser.parse_args()
@@ -34,6 +34,9 @@ def main():
         preprocessor = FakeAVCelebPreprocessor(config)
     elif args.dataset == "deepfake_eval_2024":
         preprocessor = DeepfakeEval2024Preprocessor(config)
+    elif args.dataset == "pretrain":
+        from src.data.pretrain_preprocessor import PretrainPreprocessor
+        preprocessor = PretrainPreprocessor(config)
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
