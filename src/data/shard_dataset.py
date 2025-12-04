@@ -82,6 +82,10 @@ class ShardClipDataset(IterableDataset):
             
             shard_path = os.path.join(self.shards_dir, shard_name)
             
+            if not os.path.exists(shard_path):
+                print(f"Warning: Shard not found: {shard_path}. Skipping.")
+                continue
+
             with tarfile.open(shard_path, mode="r") as tar:
                 # Lazy member lookup: only create dict when needed, use getmember() for individual lookups
                 # This avoids loading all members into memory at once
