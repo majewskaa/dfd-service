@@ -46,7 +46,7 @@ logging:
 checkpointing:
   dir: "checkpoints/encoder"
   save_best_only: false  # If false, saves checkpoints every save_frequency epochs
-  monitor: "generator_loss"  # Metric to monitor for best model
+  monitor: "train/loss_g"  # Metric to monitor for best model
   mode: "min"  # "max" or "min" (min for losses)
 
 # Device configuration
