@@ -20,13 +20,16 @@ data:
 
 model:
   # Model type - can be extended to support any BaseDetector subclass
-  name: "CNNLSTMDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", or any other detector in src/models
-  module_path: "src.models.cnn_lstm"  # Python import path to model module
+  name: "AVClassifier"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
+  module_path: "src.models.AVFF"  # Python import path to model module
   num_classes: 2
+  encoder_checkpoint: "checkpoints/encoder/last.ckpt"
   
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
-    pos_freq: 0.72
+    # pos_freq: 0.72
+    embed_dim: 256
+    freeze_encoders: true
 
 training:
   epochs: 50

@@ -1,6 +1,6 @@
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from AVFF_encoder import PatchTokenizer, CrossModalMapper, AdaptiveCrossModalMapper, TransformerDecoder, slice_pos_expand
-from base import BaseDetector
+from src.models.AVFF_encoder import PatchTokenizer, CrossModalMapper, AdaptiveCrossModalMapper, TransformerDecoder, slice_pos_expand
+from src.models.base import BaseDetector
 from typing import Tuple, Optional, Union
 import torch
 import torch.nn as nn

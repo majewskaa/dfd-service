@@ -43,6 +43,24 @@ def create_model(config: Dict[str, Any]) -> BaseDetector:
     model_config = config["model"]
     ModelClass = load_model_class(model_config["module_path"], model_config["name"])
     model = ModelClass(num_classes=model_config["num_classes"], **model_config.get("model_params", {}))
+
+    # Optional: Load pre-trained encoder weights if specified
+    if "encoder_checkpoint" in model_config:
+        ckpt_path = model_config["encoder_checkpoint"]
+        if hasattr(model, "load_encoders"):
+            print(f"Loading encoder weights from {ckpt_path}...")
+            # We assume the model's load_encoders method handles the loading logic
+            # Some models might require a device argument, but let's try default first or check signature if needed.
+            # Based on AVFF.py, load_encoders(path, device="cpu") is the signature.
+            # We can pass "cpu" safely here as we are just initializing, or let it default.
+            try:
+                model.load_encoders(ckpt_path)
+                print("Encoder weights loaded successfully.")
+            except Exception as e:
+                print(f"WARNING: Failed to load encoder weights: {e}")
+        else:
+            print(f"WARNING: 'encoder_checkpoint' specified but model '{model_config['name']}' does not have 'load_encoders' method.")
+    
     return model
 
 
