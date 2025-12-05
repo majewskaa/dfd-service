@@ -1,23 +1,25 @@
 data:
   # Paths to shard datasets
-  shards_dir: "data/processed/Deepfake_Eval_2024/shards"
+  shards_dir: "data/processed/FakeAVCeleb_v1.2-preprocessed/shards"
   test_index: "index_val.csv"
   
   # Data loading configuration
-  batch_size: 32
+  batch_size: 4
   num_workers: 4
   pin_memory: true
   frames_per_clip: 32
 
 model:
   # Model type
-  name: "CNNLSTMDetector"
-  module_path: "src.models.cnn_lstm"
+  name: "AVClassifier"
+  module_path: "src.models.AVFF"
   num_classes: 2
-  model_params: { }
+  model_params:
+    embed_dim: 256
+    freeze_encoders: true
 
 evaluation:
-  checkpoint_path: "checkpoints/last-2511_1800.ckpt"
+  checkpoint_path: "checkpoints/last.ckpt"
   device: "cuda"  # Options: "cuda", "cpu", "auto"
   limit_batches: null # Set to integer for debugging
 
@@ -27,7 +29,7 @@ evaluation:
     - "auc_roc"
     - "confusion_matrix"
   
-  output_dir: "evaluation_results_deepfake_eval_2024"
+  output_dir: "evaluation_results_avff"
 
 loss:
   name: "cross_entropy"
