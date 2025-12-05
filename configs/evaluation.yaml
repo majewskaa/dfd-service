@@ -5,7 +5,7 @@ data:
   
   # Data loading configuration
   batch_size: 32
-  num_workers: 4
+  num_workers: 1
   pin_memory: true
   frames_per_clip: 32
 
