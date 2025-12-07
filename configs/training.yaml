@@ -27,9 +27,9 @@ model:
   
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
-    # pos_freq: 0.72
+    pos_freq: 0.72
     embed_dim: 256
-    freeze_encoders: true
+    freeze_encoders: false
 
 training:
   epochs: 50

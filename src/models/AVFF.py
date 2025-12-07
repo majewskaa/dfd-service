@@ -16,10 +16,12 @@ class AVClassifier(BaseDetector):
                  audio_patch: Tuple[int, int] = (16, 16),
                  num_slices: int = 8,
                  encoder_layers: int = 2,
-                 freeze_encoders: bool = True):
+                 freeze_encoders: bool = True,
+                 pos_freq: float = 0.5):
         """
         Args:
           freeze_encoders: if True, freeze encoder weights initially (fine-tune later).
+          pos_freq: Frequency of positive class in dataset. Used to init classifier bias.
         """
         super().__init__(num_classes=num_classes)
         self.embed_dim = embed_dim
@@ -48,6 +50,17 @@ class AVClassifier(BaseDetector):
             nn.Dropout(0.2),
             nn.Linear(hidden, num_classes)
         )
+        
+        # Init classifier bias for imbalanced data if pos_freq != 0.5
+        if pos_freq != 0.5 and num_classes == 2:
+            # We want log(p / (1-p)) for the positive class (index 1) relative to neg class (index 0)
+            # bias[1] - bias[0] = log(pos_freq / (1 - pos_freq))
+            # We can set bias[0] = 0 and bias[1] = ...
+            bias_val = torch.log(torch.tensor(pos_freq / (1.0 - pos_freq)))
+            # Access the last linear layer
+            if hasattr(self.classifier[-1], 'bias') and self.classifier[-1].bias is not None:
+                 self.classifier[-1].bias.data[0] = 0.0
+                 self.classifier[-1].bias.data[1] = bias_val
 
         # slice pos param
         self.slice_pos = nn.Parameter(torch.randn(1, num_slices, embed_dim))
