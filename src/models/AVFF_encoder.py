@@ -218,7 +218,9 @@ class EncoderPretrain(nn.Module):
     def forward_encoders(self, video_input: torch.Tensor, audio_input: torch.Tensor):
         # Tokenize and get token-space targets
         v_tokens, v_targets = self.video_tokenizer(video_input, return_targets=True)
-        a_tokens, a_targets = self.audio_tokenizer(audio_input, return_targets=True)
+        # Normalize audio: statistical mean ~ -45.4, std ~ 15.4
+        audio_norm = (audio_input - (-45.4)) / 15.4
+        a_tokens, a_targets = self.audio_tokenizer(audio_norm, return_targets=True)
         # Add slice-based positional embeddings (expanded to tokens)
         v_pos = slice_pos_expand(v_tokens.size(1), self.num_slices, self.slice_pos).to(v_tokens.device)
         a_pos = slice_pos_expand(a_tokens.size(1), self.num_slices, self.slice_pos).to(a_tokens.device)

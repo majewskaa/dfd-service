@@ -121,7 +121,9 @@ class AVClassifier(BaseDetector):
           a_tokens (B, Na, D), a_targets(None), a_feat (B, Na, D)
         """
         v_tokens, _ = self.video_tokenizer(video, return_targets=False)
-        a_tokens, _ = self.audio_tokenizer(audio, return_targets=False)
+        # Normalize audio: statistical mean ~ -45.4, std ~ 15.4
+        audio_norm = (audio - (-45.4)) / 15.4
+        a_tokens, _ = self.audio_tokenizer(audio_norm, return_targets=False)
         # add slice-based pos embeddings
         v_pos = slice_pos_expand(v_tokens.size(1), self.num_slices, self.slice_pos).to(v_tokens.device)
         a_pos = slice_pos_expand(a_tokens.size(1), self.num_slices, self.slice_pos).to(a_tokens.device)
