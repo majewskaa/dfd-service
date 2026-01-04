@@ -8,6 +8,7 @@ import librosa
 import numpy as np
 
 from src.data.shard_writer import ShardWriter
+from src.data.augmentations import Augmentor
 
 
 class DataPreprocessor(ABC):
@@ -20,6 +21,7 @@ class DataPreprocessor(ABC):
             config: Configuration dictionary containing preprocessing parameters
         """
         self.config = config
+        self.augmentor = Augmentor(config.get("augmentations", {}))
         self.face_detector = self.initialize_face_detector()
         self.sample_index = 0
 
@@ -60,7 +62,7 @@ class DataPreprocessor(ABC):
         return frames
 
     @staticmethod
-    def extract_audio_mel(video_path: str, sr: int, n_mels: int, n_fft: int, hop_length: int) -> Optional[
+    def extract_audio_mel(video_path: str, sr: int, n_mels: int, n_fft: int, hop_length: int, augmentor: Optional[Augmentor] = None) -> Optional[
         np.ndarray]:
         """Extract mel spectrogram using ffmpeg (PCM s16le) + librosa.
 
@@ -75,13 +77,23 @@ class DataPreprocessor(ABC):
                 "-ar", str(sr),
                 "-",
             ]
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
-            raw_audio = proc.stdout
+            
+            if augmentor and augmentor.needs_audio_compression():
+                raw_audio = augmentor.extract_compressed_audio_as_pcm(video_path, sr)
+            else:
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+                raw_audio = proc.stdout
+                
             if not raw_audio:
                 return None
             y = np.frombuffer(raw_audio, np.int16).astype(np.float32) / 32768.0
             if y.size == 0:
                 return None
+            
+            # Apply audio augmentations (Noise)
+            if augmentor and augmentor.is_enabled():
+                y = augmentor.apply_audio_noise_numpy(y)
+
             mel_kwargs = {"y": y, "sr": sr, "n_mels": n_mels, "n_fft": n_fft, "hop_length": hop_length}
             S = librosa.feature.melspectrogram(**mel_kwargs)
             S_dB = librosa.power_to_db(S, ref=np.max)
@@ -241,7 +253,7 @@ class DataPreprocessor(ABC):
             n_fft = int(audio_cfg.get("n_fft", 2048))
             hop = int(audio_cfg.get("hop_length", 512))
             # Use librosa default upper frequency (Nyquist)
-            mel_db = self.extract_audio_mel(video_path, sr, n_mels, n_fft, hop)
+            mel_db = self.extract_audio_mel(video_path, sr, n_mels, n_fft, hop, self.augmentor)
             if mel_db is not None and mel_db.size > 0:
                 # Store as numpy float16 for compactness
                 result["audio_mel_full"] = mel_db.astype(np.float16)
@@ -321,6 +333,10 @@ class DataPreprocessor(ABC):
         # Resize to target size
         target_size = self.config["preprocessing"]["image_processing"]["target_size"]
         face = cv2.resize(face, target_size)
+        
+        # Apply video augmentations
+        if self.augmentor and self.augmentor.is_enabled():
+            face = self.augmentor.augment_video_frame_rgb(face)
 
         # Keep as uint8 for compact storage; defer normalization to loader
         return face
@@ -356,14 +372,25 @@ class DataPreprocessor(ABC):
             meta["clip_start_frame"] = int(start)
             meta["clip_length"] = int(clip_len)
 
+            # Determine the effective start frame for audio extraction, considering A/V desync
+            audio_start_frame_for_mel_extraction = start
+            if self.augmentor and self.augmentor.is_enabled():
+                desync_sec = self.augmentor.get_av_desync_offset()
+                if abs(desync_sec) > 1e-6:
+                    shift_frames = int(desync_sec * fps)
+                    audio_start_frame_for_mel_extraction = start + shift_frames
+                    # Clamp audio_start_frame to valid range relative to video frames
+                    audio_start_frame_for_mel_extraction = max(0, min(audio_start_frame_for_mel_extraction, t - 1))
+                    meta["av_desync_sec"] = desync_sec # Store desync amount in metadata
+
             # Extract frame-level mel spectrograms
             mel_frames: np.ndarray | None = None
             if audio_mel_full is not None and mel_per_second > 0 and fps > 0:
                 target_mel_size = tuple(audio_cfg.get("target_mel_size", [299, 299]))
                 mel_frames = self.extract_frame_level_mel(
-                    audio_mel_full, start, clip_len, fps, mel_per_second, overlap_ratio, target_mel_size
+                    audio_mel_full, audio_start_frame_for_mel_extraction, clip_len, fps, mel_per_second, overlap_ratio, target_mel_size
                 )
-
+            
             self.shard_writer.add_sample(sample_id, clip, label, meta, mel_frames=mel_frames)
             start += clip_stride
         self.sample_index += 1

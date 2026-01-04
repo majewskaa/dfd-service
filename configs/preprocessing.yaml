@@ -5,6 +5,34 @@ data:
   val_split: 1.0
   random_seed: 42
 
+debug:
+  limit_per_category: 500  # Set to null or -1 to disable
+
+augmentations:
+  enabled: true
+  video:
+    compression:
+      enabled: true
+      type: "jpeg" # "jpeg" or "h264"
+      quality: 50  # for jpeg: 1-100
+      crf: 23      # for h264: 0-51
+    resolution:
+      enabled: true
+      scale_ratio: 0.5 # 0.0-1.0
+  audio:
+    compression:
+      enabled: true
+      format: "mp3" # "mp3" or "aac"
+      bitrate: "64k"
+    noise:
+      enabled: true
+      snr_db: 15
+  multimodal:
+    av_desync:
+      enabled: true
+      min_shift_ms: -200
+      max_shift_ms: 200
+
 preprocessing:
   face_detection:
     min_face_size: 100

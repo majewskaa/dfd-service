@@ -90,7 +90,8 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
         self.load_metadata(metadata_path)
 
         # Create output directory
-        output_dir = os.path.join(output_dir, self.dataset_name)
+        suffix = self.augmentor.get_suffix() if hasattr(self, 'augmentor') else ""
+        output_dir = os.path.join(output_dir, self.dataset_name + suffix)
         os.makedirs(output_dir, exist_ok=True)
 
         # Initialize statistics tracking
@@ -122,9 +123,11 @@ class FakeAVCelebPreprocessor(DataPreprocessor):
                     if file.endswith('.mp4'):
                         files_in_category.append(os.path.join(root, file))
             
-            # TODO: REMOVE THIS (Limit for testing/debugging)
-            random.shuffle(files_in_category)
-            files_in_category = files_in_category[:500]
+            # Optional: Limit number of videos per category for debugging/experiments
+            limit = self.config.get("debug", {}).get("limit_per_category", None)
+            if limit is not None and limit > 0:
+                random.shuffle(files_in_category)
+                files_in_category = files_in_category[:limit]
             
             all_video_files.extend(files_in_category)
 
