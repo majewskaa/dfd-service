@@ -11,12 +11,12 @@ data:
 
 model:
   # Model type
-  name: "AVClassifier"
-  module_path: "src.models.AVFF"
+  name: "XceptionMaxFusionDetector"
+  module_path: "src.models.xception"
   num_classes: 2
   model_params:
-    embed_dim: 256
-    freeze_encoders: true
+    # embed_dim: 256
+    # freeze_encoders: true
 
 evaluation:
   checkpoint_path: "checkpoints/last-v1.ckpt"
@@ -29,7 +29,7 @@ evaluation:
     - "auc_roc"
     - "confusion_matrix"
   
-  output_dir: "evaluation_results_avff"
+  output_dir: "evaluation_results_snr10"
 
 loss:
   name: "cross_entropy"
