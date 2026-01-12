@@ -61,8 +61,8 @@ class DeepfakeTask(pl.LightningModule):
         video_frames = (video_frames - mean) / std
 
         audio_mel = batch["audio_frames"]
-             if audio_mel.dim() == 4:
-                audio_mel = audio_mel.unsqueeze(2)
+        if audio_mel.dim() == 4:
+            audio_mel = audio_mel.unsqueeze(2)
 
         labels = batch["label"]
         return video_frames, audio_mel.float(), labels

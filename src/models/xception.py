@@ -13,7 +13,7 @@ class XceptionMaxFusionDetector(BaseDetector):
     individual predicted logits.
     """
 
-    def __init__(self, num_classes: int = 2):
+    def __init__(self, num_classes: int = 2, pos_freq: float = 0.5):
         super().__init__(num_classes)
 
         # --- Video Predictor (Xception from timm) ---
@@ -21,6 +21,14 @@ class XceptionMaxFusionDetector(BaseDetector):
 
         # --- Audio Predictor (Xception from timm) ---
         self.audio_model = timm.create_model('legacy_xception', pretrained=True, num_classes=num_classes, in_chans=1)
+
+        # Init classifier bias for imbalanced data
+        if pos_freq != 0.5 and num_classes == 2:
+            bias_val = torch.log(torch.tensor(pos_freq / (1.0 - pos_freq)))
+            for model in [self.video_model, self.audio_model]:
+                if hasattr(model, 'fc') and model.fc.bias is not None:
+                     model.fc.bias.data[0] = 0.0
+                     model.fc.bias.data[1] = bias_val
 
     def forward(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> torch.Tensor:
         """
