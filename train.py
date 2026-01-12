@@ -42,7 +42,7 @@ def load_model_class(module_path: str, class_name: str):
 def create_model(config: Dict[str, Any]) -> BaseDetector:
     model_config = config["model"]
     ModelClass = load_model_class(model_config["module_path"], model_config["name"])
-    model = ModelClass(num_classes=model_config["num_classes"], **model_config.get("model_params", {}))
+    model = ModelClass(num_classes=model_config["num_classes"], **(model_config.get("model_params") or {}))
 
     # Optional: Load pre-trained encoder weights if specified
     if "encoder_checkpoint" in model_config:

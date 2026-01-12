@@ -4,6 +4,7 @@ import subprocess
 import os
 import random
 from typing import Dict, Any, List, Optional, Tuple
+import imageio_ffmpeg
 
 class Augmentor:
     """Handles video, audio, and multimodal augmentations."""
@@ -156,9 +157,11 @@ class Augmentor:
         else:
             return None
 
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+
         # Cmd1: Video -> Compressed Audio
         cmd1 = [
-            "ffmpeg", "-i", video_path,
+            ffmpeg_exe, "-i", video_path,
             "-vn", # No video
             "-acodec", codec,
             "-b:a", bitrate,
@@ -168,7 +171,7 @@ class Augmentor:
         
         # Cmd2: Compressed Audio -> PCM
         cmd2 = [
-            "ffmpeg", "-i", "-",
+            ffmpeg_exe, "-i", "-",
             "-f", "s16le",
             "-acodec", "pcm_s16le",
             "-ac", "1",

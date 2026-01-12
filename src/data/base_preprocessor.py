@@ -4,11 +4,14 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple, Optional
 
 import cv2
-import librosa
+import cv2
+import torch
+import torchaudio
 import numpy as np
 
 from src.data.shard_writer import ShardWriter
 from src.data.augmentations import Augmentor
+import imageio_ffmpeg
 
 
 class DataPreprocessor(ABC):
@@ -69,8 +72,9 @@ class DataPreprocessor(ABC):
         Returns a numpy array [n_mels, time] in dB scale, or None on failure.
         """
         try:
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
             cmd = [
-                "ffmpeg", "-i", video_path,
+                ffmpeg_exe, "-i", video_path,
                 "-f", "s16le",
                 "-acodec", "pcm_s16le",
                 "-ac", "1",
@@ -94,11 +98,36 @@ class DataPreprocessor(ABC):
             if augmentor and augmentor.is_enabled():
                 y = augmentor.apply_audio_noise_numpy(y)
 
-            mel_kwargs = {"y": y, "sr": sr, "n_mels": n_mels, "n_fft": n_fft, "hop_length": hop_length}
-            S = librosa.feature.melspectrogram(**mel_kwargs)
-            S_dB = librosa.power_to_db(S, ref=np.max)
-            return S_dB.astype(np.float32)
-        except Exception:
+            mel_transform = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sr,
+                n_fft=n_fft,
+                win_length=n_fft,
+                hop_length=hop_length,
+                n_mels=n_mels,
+                normalized=True # librosa uses norm=None by default? Let's check matching.
+                # librosa default: slanley, norm='slaney', power=2.0
+                # torchaudio defaults are slightly different.
+                # To match librosa closely: 
+                # mel_scale="htk" if librosa used htk=True? No, librosa uses Slaney.
+                # Torchaudio has mel_scale="slaney" in newer versions.
+            )
+            
+            # Convert numpy audio to torch tensor
+            y_tensor = torch.from_numpy(y).unsqueeze(0) # (1, time)
+            
+            # Compute Mel Spectrogram
+            S = mel_transform(y_tensor)
+            
+            # Convert to dB (Amplitude to DB) - Librosa uses power_to_db (10*log10(S))
+            # torchaudio.transforms.AmplitudeToDB operates on power if stype='power'
+            # MelSpectrogram returns power by default.
+            db_transform = torchaudio.transforms.AmplitudeToDB(stype='power', top_db=80.0)
+            S_dB = db_transform(S)
+            
+            # Convert back to numpy [n_mels, time]
+            return S_dB.squeeze(0).numpy().astype(np.float32)
+        except Exception as e:
+            print(f"Error extracting audio for {video_path}: {e}")
             return None
 
     @staticmethod
