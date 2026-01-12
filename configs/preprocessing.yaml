@@ -9,10 +9,10 @@ debug:
   limit_per_category: 500  # Set to null or -1 to disable
 
 augmentations:
-  enabled: true
+  enabled: false
   video:
     compression:
-      enabled: true
+      enabled: false
       type: "jpeg" # "jpeg" or "h264"
       quality: 50  # for jpeg: 1-100
       crf: 30      # for h264: 0-51
