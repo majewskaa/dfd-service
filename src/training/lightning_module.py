@@ -108,6 +108,7 @@ class DeepfakeTask(pl.LightningModule):
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         video, audio, targets = self._prepare_batch(batch)
+        print(f"DEBUG: video shape: {video.shape}, audio shape: {audio.shape}")
         outputs = self(video, audio)
         probs = torch.softmax(outputs, dim=1)
         return {"probs": probs, "targets": targets}
