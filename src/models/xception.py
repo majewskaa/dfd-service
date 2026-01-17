@@ -49,8 +49,8 @@ class XceptionMaxFusionDetector(BaseDetector):
         _, _, C_a, _, _ = audio_input.shape  # just for clarity
 
         # Reshape: process all frames at once
-        video_reshaped = image_input.view(B * T, C_v, H, W)  # (B*T, 3, H, W)
-        audio_reshaped = audio_input.view(B * T, C_a, H, W)  # (B*T, 1, H, W)
+        video_reshaped = image_input.contiguous().view(B * T, C_v, H, W)  # (B*T, 3, H, W)
+        audio_reshaped = audio_input.contiguous().view(B * T, C_a, H, W)  # (B*T, 1, H, W)
 
         # Forward through backbones
         video_logits = self.video_model(video_reshaped)  # (B*T, num_classes)

@@ -4,7 +4,7 @@ data:
   test_index: "index_val.csv"
   
   # Data loading configuration
-  batch_size: 32
+  batch_size: 8
   num_workers: 1
   pin_memory: true
   frames_per_clip: 32
