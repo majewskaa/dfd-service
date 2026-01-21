@@ -1,11 +1,11 @@
 data:
   # Paths to shard datasets
-  shards_dir: "data/processed/FakeAVCeleb_v1.2_aac96k/shards"
+  shards_dir: "data/processed/FakeAVCeleb_v1.2/shards"
   train_index: "index_train.csv"
   val_index: "index_val.csv"
   
   # Data loading configuration
-  batch_size: 1  # Mini-batch size for training
+  batch_size: 8  # Mini-batch size for training
   num_workers: 1  # Number of data loading workers
   pin_memory: true
   frames_per_clip: 32 # Number of frames to sample per video clip
@@ -20,8 +20,8 @@ data:
 
 model:
   # Model type - can be extended to support any BaseDetector subclass
-  name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
-  module_path: "src.models.xception"  # Python import path to model module
+  name: "CNNLSTMDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
+  module_path: "src.models.cnn_lstm"  # Python import path to model module
   num_classes: 2
   # encoder_checkpoint: "checkpoints/encoder/last.ckpt"  # Path to pre-trained encoder checkpoint
   
@@ -60,7 +60,7 @@ logging:
 
 checkpointing:
   enabled: true
-  dir: "checkpoints"
+  dir: "check_cnn_lstm"
   monitor: "val_loss"
   mode: "min"
 
