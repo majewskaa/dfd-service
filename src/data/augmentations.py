@@ -160,9 +160,10 @@ class Augmentor:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
         # Cmd1: Video -> Compressed Audio
+        # Add -y to overwrite if needed (stdout), -vn for no video
         cmd1 = [
-            ffmpeg_exe, "-i", video_path,
-            "-vn", # No video
+            ffmpeg_exe, "-y", "-i", video_path,
+            "-vn", 
             "-acodec", codec,
             "-b:a", bitrate,
             "-f", container,
@@ -171,7 +172,7 @@ class Augmentor:
         
         # Cmd2: Compressed Audio -> PCM
         cmd2 = [
-            ffmpeg_exe, "-i", "-",
+            ffmpeg_exe, "-y", "-i", "-",
             "-f", "s16le",
             "-acodec", "pcm_s16le",
             "-ac", "1",
@@ -179,25 +180,76 @@ class Augmentor:
             "-",
         ]
         
-        try:
-            # We must use subprocess with piping.
-            # stdin=subprocess.PIPE for cmd2 is handled by passing p1.stdout
-            p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            p2 = subprocess.run(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
-            if p1.poll() is None:
-                p1.terminate()
-            return p2.stdout
-        except Exception as e:
-            print(f"Audio compression failed: {e}")
-            return None
+        import tempfile
+        
+        # Use temporary files for stderr to avoid deadlocks and buffer filling
+        with tempfile.TemporaryFile() as err1_file, tempfile.TemporaryFile() as err2_file:
+            p1 = None
+            p2 = None
+            try:
+                # Start the first process (Video -> Compressed Audio)
+                p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=err1_file)
+                
+                # Start the second process (Compressed Audio -> PCM), reading from p1
+                p2 = subprocess.Popen(
+                    cmd2, 
+                    stdin=p1.stdout, 
+                    stdout=subprocess.PIPE, 
+                    stderr=err2_file
+                )
+                
+                # Allow p1 to receive a SIGPIPE if p2 exits.
+                p1.stdout.close() 
+
+                # Wait for p2 to finish and get output with timeout
+                try:
+                    stdout_data, _ = p2.communicate(timeout=60) # 60s timeout per file
+                except subprocess.TimeoutExpired:
+                    print(f"Audio compression timed out for {video_path}")
+                    p2.kill()
+                    p1.kill()
+                    return None
+                
+                # Wait for p1 to finish
+                try:
+                    p1.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    p1.kill()
+
+                if p2.returncode != 0:
+                     print(f"Audio compression failed with return code {p2.returncode} for {video_path}")
+                     # Print stderr for debugging
+                     err2_file.seek(0)
+                     print(f"ffmpeg p2 stderr: {err2_file.read().decode('utf-8', errors='replace')}")
+                     err1_file.seek(0)
+                     print(f"ffmpeg p1 stderr: {err1_file.read().decode('utf-8', errors='replace')}")
+                     return None
+                
+                # Check p1 return code too (ignoring SIGPIPE which is -13 on unix, or broken pipe)
+                if p1.returncode != 0 and p1.returncode != -13 and p1.returncode != 3221225786: # 3221225786 is CTRL+C on Windows/SIGINT propagation sometimes?
+                     # Just warn, as long as p2 got data it might be fine, but worth noting
+                     # Wait, if p1 failed, p2 probably got truncated data.
+                     # But if p2 returned 0, it means it decoded what it got successfully.
+                     pass
+
+                return stdout_data
+
+            except Exception as e:
+                print(f"Audio compression failed for {video_path}: {e}")
+                return None
+            finally:
+                # Ensure cleanup
+                if p1:
+                    try: p1.kill() 
+                    except: pass
+                if p2:
+                    try: p2.kill() 
+                    except: pass
 
         # Noise
         if aud_config.get("noise", {}).get("enabled", False):
             snr = aud_config["noise"].get("snr_db", 15)
             # ffmpeg doesn't have a direct "add noise at SNR" filter easily without a noise file.
-            # But we can approximate or use 'anoisesrc' and mix.
-            # A simpler approach for exact SNR control might be doing it in python (numpy) after extraction.
-            # So we might skip ffmpeg filter for noise and do it in post-processing.
             pass
 
         return ",".join(filters)

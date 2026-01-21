@@ -343,6 +343,7 @@ class DataPreprocessor(ABC):
             image_codec=wds_cfg.get("image_codec", "webp"),
             image_quality=int(wds_cfg.get("image_quality", 90)),
             index_filename=wds_cfg.get("index_filename", "index.csv"),
+            overwrite=wds_cfg.get("overwrite", False),
         )
 
     def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:

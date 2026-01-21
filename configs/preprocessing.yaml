@@ -57,6 +57,7 @@ output:
   # WebDataset configuration
   webdataset:
     prefix: "shard"
+    overwrite: true
     max_shard_size_mb: 1024
     image_codec: "webp"     # "webp" or "jpeg"
     image_quality: 90        # 1-100

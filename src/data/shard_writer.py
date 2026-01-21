@@ -27,6 +27,7 @@ class ShardWriter:
             image_codec: str = "webp",
             image_quality: int = 90,
             index_filename: str = "index.csv",
+            overwrite: bool = False,
     ):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
@@ -35,6 +36,18 @@ class ShardWriter:
         self.image_codec = image_codec.lower()
         self.image_quality = int(image_quality)
         self.index_path = os.path.join(self.output_dir, index_filename)
+
+        # Handle overwrite
+        if overwrite:
+            if os.path.exists(self.index_path):
+                os.remove(self.index_path)
+            # Remove existing shards
+            for f in os.listdir(self.output_dir):
+                if f.startswith(self.shard_prefix) and f.endswith(".tar"):
+                    try:
+                        os.remove(os.path.join(self.output_dir, f))
+                    except OSError:
+                        pass
 
         # State
         self._shard_idx = 0
