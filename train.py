@@ -152,7 +152,8 @@ def main():
             monitor=config["checkpointing"]["monitor"],
             patience=es_config["patience"],
             mode=config["checkpointing"]["mode"],
-            min_delta=es_config.get("min_delta", 0.0)
+            min_delta=es_config.get("min_delta", 0.0),
+            check_on_train_epoch_end=True
         ))
 
     # Logger
