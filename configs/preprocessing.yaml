@@ -1,12 +1,12 @@
 data:
   input_dir: "data/raw"
   output_dir: "data/processed"
-  train_split: 0.8
-  val_split: 0.2
+  train_split: 0
+  val_split: 1
   random_seed: 42
 
 debug:
-  limit_per_category: 500  # Set to null or -1 to disable
+  limit_per_category: 50  # Set to null or -1 to disable
 
 augmentations:
   enabled: false

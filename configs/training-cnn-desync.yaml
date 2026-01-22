@@ -1,6 +1,6 @@
 data:
   # Paths to shard datasets
-  shards_dir: "data/processed/FakeAVCeleb_v1.2_aac96k/shards"
+  shards_dir: "data/processed/FakeAVCeleb_v1.2_desync/shards"
   train_index: "index_train.csv"
   val_index: "index_val.csv"
   
@@ -60,7 +60,7 @@ logging:
 
 checkpointing:
   enabled: true
-  dir: "check_avff_aac96k"
+  dir: "check_avff_desync"
   monitor: "val_loss"
   mode: "min"
 

@@ -129,9 +129,12 @@ class DeepfakeEval2024Preprocessor(DataPreprocessor):
                 files_by_category[category].append(file_path)
 
         for category, files in files_by_category.items():
-            # TODO: remove this limit after testing
-            # Limit to 5 per category for testing
-            selected_files = files[:5]
+            limit = self.config.get("debug", {}).get("limit_per_category")
+            if limit is not None and limit > 0:
+                selected_files = files[:limit]
+            else:
+                selected_files = files
+            
             all_video_files.extend(selected_files)
             print(f"Category {category}: Selected {len(selected_files)}/{len(files)} videos")
 

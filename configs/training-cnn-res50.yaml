@@ -20,10 +20,10 @@ data:
 
 model:
   # Model type - can be extended to support any BaseDetector subclass
-  name: "CNNLSTMDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
-  module_path: "src.models.cnn_lstm"  # Python import path to model module
+  name: "AVClassifier"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
+  module_path: "src.models.AVFF"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
   num_classes: 2
-  # encoder_checkpoint: "checkpoints/encoder/last.ckpt"  # Path to pre-trained encoder checkpoint
+  encoder_checkpoint: "checkpoints/encoder/last.ckpt"  # Path to pre-trained encoder checkpoint
   
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
@@ -60,7 +60,7 @@ logging:
 
 checkpointing:
   enabled: true
-  dir: "check_cnn_res50"
+  dir: "check_avff_res50"
   monitor: "val_loss"
   mode: "min"
 
