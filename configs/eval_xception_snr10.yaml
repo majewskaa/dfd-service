@@ -16,7 +16,7 @@ loss:
   name: "cross_entropy"
 
 evaluation:
-  checkpoint_path: "checkpoints/checkpoints-snr10/last.ckpt"
+  checkpoint_path: "checkpoints-snr10/last.ckpt"
   output_dir: "evaluation_results/xception_snr10"
   device: "cuda"
   limit_batches: null

@@ -16,7 +16,7 @@ loss:
   name: "cross_entropy"
 
 evaluation:
-  checkpoint_path: "checkpoints/checkpoints-aac96k/last.ckpt"
+  checkpoint_path: "checkpoints-aac96k/last.ckpt"
   output_dir: "evaluation_results/xception_aac96k"
   device: "cuda"
   limit_batches: null

@@ -16,7 +16,7 @@ loss:
   name: "cross_entropy"
 
 evaluation:
-  checkpoint_path: "checkpoints/check_cnn_res50/last.ckpt"
+  checkpoint_path: "check_cnn_res50/last.ckpt"
   output_dir: "evaluation_results/cnn_lstm_res50"
   device: "cuda"
   limit_batches: null

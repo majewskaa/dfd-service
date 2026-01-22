@@ -16,7 +16,7 @@ loss:
   name: "cross_entropy"
 
 evaluation:
-  checkpoint_path: "checkpoints/checkpoints-desync/last.ckpt"
+  checkpoint_path: "checkpoints-desync/last.ckpt"
   output_dir: "evaluation_results/xception_desync"
   device: "cuda"
   limit_batches: null
