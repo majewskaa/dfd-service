@@ -19,7 +19,7 @@ model:
     # freeze_encoders: true
 
 evaluation:
-  checkpoint_path: "checkpoints/last-v1.ckpt"
+  checkpoint_path: "checkpoints/last.ckpt"
   device: "cuda"  # Options: "cuda", "cpu", "auto"
   limit_batches: null # Set to integer for debugging
 
