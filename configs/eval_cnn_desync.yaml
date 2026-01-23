@@ -1,7 +1,7 @@
 data:
   shards_dir: "data/processed/Deepfake_Eval_2024/shards"
   test_index: "index_val.csv"
-  batch_size: 4
+  batch_size: 8
   num_workers: 1
   pin_memory: true
   frames_per_clip: 32
