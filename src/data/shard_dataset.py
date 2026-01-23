@@ -94,6 +94,12 @@ class ShardClipDataset(IterableDataset):
                 for sample_id, _, sample_dir, num_frames, label, meta_json in entries:
                     try:
                         sample = self._load_sample(tar, _members_cache, sample_id, sample_dir, num_frames, label, meta_json)
+                        
+                        # Skip if missing audio (user requirement)
+                        if "audio_frames" not in sample:
+                            # print(f"Warning: Skipping sample {sample_id} due to missing audio.")
+                            continue
+                            
                         yield sample
                     except Exception as e:
                         print(f"Error loading sample {sample_id}: {e}")
