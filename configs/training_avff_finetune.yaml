@@ -1,0 +1,73 @@
+data:
+  # Paths to shard datasets
+  shards_dir: "data/processed/FakeAVCeleb_v1.2/shards"
+  train_index: "index_train.csv"
+  val_index: "index_val.csv"
+  
+  # Data loading configuration
+  batch_size: 16  # Reduced batch size for fine-tuning stability
+  num_workers: 2
+  pin_memory: true
+  frames_per_clip: 32
+  
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  
+  max_train_samples: null
+  max_val_samples: null
+
+model:
+  name: "AVClassifier"
+  module_path: "src.models.AVFF"
+  num_classes: 2
+  encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Ensure this is the BEST epoch (e.g. 46)
+  
+  model_params:
+    pos_freq: 0.72
+    embed_dim: 256
+    freeze_encoders: false  # UNFREEZE to allow features to adapt to classification
+    # Note: Pre-trained features are generative (reconstruction), so they MUST be adapted for discrimination.
+
+training:
+  epochs: 30  # Fine-tuning needs fewer epochs
+  grad_clip: 1.0
+  
+  early_stopping:
+    patience: 5
+    min_delta: 0.0001
+  
+  optimizer:
+    name: "adam"
+    learning_rate: 0.00001  # 1e-5: Lower LR is CRITICAL for fine-tuning transformers
+    weight_decay: 0.0001
+  
+  scheduler:
+    name: "cosine"
+    min_lr: 0.000001
+
+loss:
+  name: "cross_entropy"  # Simpler loss function for baseline
+  # name: "focal"
+  # focal_gamma: 3.0
+
+logging:
+  log_dir: "logs"
+  wandb:
+    project: "dfd-lab"
+    offline: false
+
+checkpointing:
+  enabled: true
+  dir: "check_avff_finetune_cross"
+  monitor: "val_loss"
+  mode: "min"
+
+trainer:
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  accumulate_grad_batches: 16
+  fast_dev_run: false
+
+device: "cuda"
+seed: 42
