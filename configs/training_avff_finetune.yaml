@@ -30,7 +30,7 @@ model:
     # Note: Pre-trained features are generative (reconstruction), so they MUST be adapted for discrimination.
 
 training:
-  epochs: 30  # Fine-tuning needs fewer epochs
+  epochs: 150  # Fine-tuning needs fewer epochs
   grad_clip: 1.0
   
   early_stopping:

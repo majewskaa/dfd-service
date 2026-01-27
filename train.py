@@ -152,8 +152,7 @@ def main():
             monitor=config["checkpointing"]["monitor"],
             patience=es_config["patience"],
             mode=config["checkpointing"]["mode"],
-            min_delta=es_config.get("min_delta", 0.0),
-            check_on_train_epoch_end=True
+            min_delta=es_config.get("min_delta", 0.0)
         ))
 
     # Logger
@@ -178,8 +177,17 @@ def main():
     )
 
     # Train
-    print("Starting training...")
-    trainer.fit(task, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.resume)
+    # Determine checkpoint path
+    ckpt_path = args.resume
+    if ckpt_path is None:
+        ckpt_path = config.get("checkpointing", {}).get("resume_from", None)
+    
+    if ckpt_path:
+        print(f"Resuming training from checkpoint: {ckpt_path}")
+    else:
+        print("Starting training from scratch...")
+
+    trainer.fit(task, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":

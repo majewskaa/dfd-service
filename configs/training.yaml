@@ -5,7 +5,7 @@ data:
   val_index: "index_val.csv"
   
   # Data loading configuration
-  batch_size: 8  # Mini-batch size for training
+  batch_size: 16  # Mini-batch size for training
   num_workers: 1  # Number of data loading workers
   pin_memory: true
   frames_per_clip: 32 # Number of frames to sample per video clip
@@ -23,25 +23,25 @@ model:
   name: "AVClassifier"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
   module_path: "src.models.AVFF"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
   num_classes: 2
-  encoder_checkpoint: "checkpoints/encoder/last.ckpt"  # Path to pre-trained encoder checkpoint
+  encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Path to pre-trained encoder checkpoint
   
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
     pos_freq: 0.72
-    # embed_dim: 256          # Embedding dimension for encoders
-    # freeze_encoders: false  # Freeze encoders during training
+    embed_dim: 256          # Embedding dimension for encoders
+    freeze_encoders: false  # Freeze encoders during training
 
 training:
-  epochs: 50
+  epochs: 150
   grad_clip: 1.0
   
   early_stopping:
     patience: 10
-    min_delta: 0.001
+    min_delta: 0.0001
   
   optimizer:
     name: "adam"
-    learning_rate: 0.0001
+    learning_rate: 0.00001
     weight_decay: 0.0001
   
   scheduler:
@@ -60,9 +60,10 @@ logging:
 
 checkpointing:
   enabled: true
-  dir: "check_avff"
+  dir: "check_avff_finetune"
   monitor: "val_loss"
   mode: "min"
+  resume_from: "check_avff_finetune/last.ckpt"
 
 # PyTorch Lightning Trainer specific flags
 trainer:
