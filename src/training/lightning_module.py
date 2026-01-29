@@ -89,6 +89,7 @@ class DeepfakeTask(pl.LightningModule):
 
         # Log loss
         batch_size = video.shape[0]
+        print(f"DEBUG: validation_step loss={loss.item()}, batch_size={batch_size}")
         self.log("val_loss", loss, on_epoch=True, prog_bar=True, batch_size=batch_size)
 
         # Update metrics
