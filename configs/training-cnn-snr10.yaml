@@ -28,8 +28,8 @@ model:
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
     pos_freq: 0.72
-    embed_dim: 256          # Embedding dimension for encoders
-    freeze_encoders: false  # Freeze encoders during training
+    # embed_dim: 256          # Embedding dimension for encoders
+    # freeze_encoders: false  # Freeze encoders during training
 
 training:
   epochs: 50
