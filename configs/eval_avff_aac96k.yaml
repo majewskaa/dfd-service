@@ -1,0 +1,30 @@
+data:
+  shards_dir: "data/processed/Deepfake_Eval_2024/shards"
+  test_index: "index_val.csv"
+  batch_size: 8
+  num_workers: 1
+  pin_memory: true
+  frames_per_clip: 32
+
+model:
+  name: "AVClassifier"
+  module_path: "src.models.AVFF"
+  num_classes: 2
+  model_params:
+    pos_freq: 0.72
+    embed_dim: 256
+    freeze_encoders: false
+
+loss:
+  name: "cross_entropy"
+
+evaluation:
+  checkpoint_path: "check_avff_aac96k/last.ckpt"
+  output_dir: "evaluation_results/avff_aac96k"
+  device: "cuda"
+  limit_batches: null
+  metrics:
+    - "accuracy"
+    - "f1_score"
+    - "auc_roc"
+    - "confusion_matrix"
