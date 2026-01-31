@@ -20,10 +20,10 @@ data:
 
 model:
   # Model type - can be extended to support any BaseDetector subclass
-  name: "AVClassifier"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
-  module_path: "src.models.AVFF"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
+  name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
+  module_path: "src.models.xception"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
   num_classes: 2
-  encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Path to pre-trained encoder checkpoint
+  # encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Path to pre-trained encoder checkpoint
   
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
@@ -32,7 +32,7 @@ model:
     freeze_encoders: false  # Freeze encoders during training
 
 training:
-  epochs: 150
+  epochs: 100
   grad_clip: 1.0
   
   early_stopping:
@@ -41,7 +41,7 @@ training:
   
   optimizer:
     name: "adam"
-    learning_rate: 0.00001
+    learning_rate: 0.00003
     weight_decay: 0.0001
   
   scheduler:
@@ -60,10 +60,10 @@ logging:
 
 checkpointing:
   enabled: true
-  dir: "check_avff_finetune"
+  dir: "checkpoints-snr10-finetune"
   monitor: "val_loss"
   mode: "min"
-  resume_from: "check_avff_finetune/last.ckpt"
+  resume_from: "checkpoints-base/last.ckpt"
 
 # PyTorch Lightning Trainer specific flags
 trainer:
