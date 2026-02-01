@@ -4,10 +4,14 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple, Optional
 
 import cv2
-import librosa
+import cv2
+import torch
+import torchaudio
 import numpy as np
 
 from src.data.shard_writer import ShardWriter
+from src.data.augmentations import Augmentor
+import imageio_ffmpeg
 
 
 class DataPreprocessor(ABC):
@@ -20,6 +24,7 @@ class DataPreprocessor(ABC):
             config: Configuration dictionary containing preprocessing parameters
         """
         self.config = config
+        self.augmentor = Augmentor(config.get("augmentations", {}))
         self.face_detector = self.initialize_face_detector()
         self.sample_index = 0
 
@@ -60,33 +65,69 @@ class DataPreprocessor(ABC):
         return frames
 
     @staticmethod
-    def extract_audio_mel(video_path: str, sr: int, n_mels: int, n_fft: int, hop_length: int) -> Optional[
+    def extract_audio_mel(video_path: str, sr: int, n_mels: int, n_fft: int, hop_length: int, augmentor: Optional[Augmentor] = None) -> Optional[
         np.ndarray]:
         """Extract mel spectrogram using ffmpeg (PCM s16le) + librosa.
 
         Returns a numpy array [n_mels, time] in dB scale, or None on failure.
         """
         try:
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
             cmd = [
-                "ffmpeg", "-i", video_path,
+                ffmpeg_exe, "-i", video_path,
                 "-f", "s16le",
                 "-acodec", "pcm_s16le",
                 "-ac", "1",
                 "-ar", str(sr),
                 "-",
             ]
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
-            raw_audio = proc.stdout
+            
+            if augmentor and augmentor.needs_audio_compression():
+                raw_audio = augmentor.extract_compressed_audio_as_pcm(video_path, sr)
+            else:
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+                raw_audio = proc.stdout
+                
             if not raw_audio:
                 return None
             y = np.frombuffer(raw_audio, np.int16).astype(np.float32) / 32768.0
             if y.size == 0:
                 return None
-            mel_kwargs = {"y": y, "sr": sr, "n_mels": n_mels, "n_fft": n_fft, "hop_length": hop_length}
-            S = librosa.feature.melspectrogram(**mel_kwargs)
-            S_dB = librosa.power_to_db(S, ref=np.max)
-            return S_dB.astype(np.float32)
-        except Exception:
+            
+            # Apply audio augmentations (Noise)
+            if augmentor and augmentor.is_enabled():
+                y = augmentor.apply_audio_noise_numpy(y)
+
+            mel_transform = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sr,
+                n_fft=n_fft,
+                win_length=n_fft,
+                hop_length=hop_length,
+                n_mels=n_mels,
+                normalized=True # librosa uses norm=None by default? Let's check matching.
+                # librosa default: slanley, norm='slaney', power=2.0
+                # torchaudio defaults are slightly different.
+                # To match librosa closely: 
+                # mel_scale="htk" if librosa used htk=True? No, librosa uses Slaney.
+                # Torchaudio has mel_scale="slaney" in newer versions.
+            )
+            
+            # Convert numpy audio to torch tensor
+            y_tensor = torch.from_numpy(y).unsqueeze(0) # (1, time)
+            
+            # Compute Mel Spectrogram
+            S = mel_transform(y_tensor)
+            
+            # Convert to dB (Amplitude to DB) - Librosa uses power_to_db (10*log10(S))
+            # torchaudio.transforms.AmplitudeToDB operates on power if stype='power'
+            # MelSpectrogram returns power by default.
+            db_transform = torchaudio.transforms.AmplitudeToDB(stype='power', top_db=80.0)
+            S_dB = db_transform(S)
+            
+            # Convert back to numpy [n_mels, time]
+            return S_dB.squeeze(0).numpy().astype(np.float32)
+        except Exception as e:
+            print(f"Error extracting audio for {video_path}: {e}")
             return None
 
     @staticmethod
@@ -96,7 +137,8 @@ class DataPreprocessor(ABC):
             clip_len: int,
             fps: float,
             mel_per_second: float,
-            overlap_ratio: float = 0.5
+            overlap_ratio: float = 0.5,
+            target_mel_size: Tuple[int, int] = (299, 299)
     ) -> np.ndarray:
         """Extract mel spectrograms for each frame in the clip with overlap for continuity.
 
@@ -107,54 +149,73 @@ class DataPreprocessor(ABC):
             fps: Frames per second of the video
             mel_per_second: Mel frames per second
             overlap_ratio: Ratio of overlap between consecutive mel spectrograms (0.0-1.0)
+            target_mel_size: Target size for resizing mel spectrograms (height, width)
 
         Returns:
-            Frame-level mel spectrograms [clip_len, n_mels, mel_frames_per_frame_with_overlap]
+            Frame-level mel spectrograms [clip_len, target_height, target_width]
         """
-        n_mels = audio_mel_full.shape[0]
-        mel_frames_per_frame = max(1, int(round(mel_per_second / fps)))
+        # Calculate how many mel frames correspond to one video frame
+        mel_frames_per_video_frame = max(1, int(round(mel_per_second / fps)))
         
         # Calculate overlap in mel frames
-        overlap_frames = int(round(mel_frames_per_frame * overlap_ratio))
-        overlap_frames = max(0, min(overlap_frames, mel_frames_per_frame - 1))
+        overlap = int(round(mel_frames_per_video_frame * overlap_ratio))
+        overlap = max(0, min(overlap, mel_frames_per_video_frame - 1))
         
-        # Calculate the total size including overlap (previous + current + next)
-        mel_frames_per_frame_with_overlap = mel_frames_per_frame + 2 * overlap_frames
+        # Total mel frames needed per video frame (including overlap)
+        total_mel_frames = mel_frames_per_video_frame + 2 * overlap
 
-        # Initialize output array for frame-level mel spectrograms with overlap
-        mel_frames = np.zeros((clip_len, n_mels, mel_frames_per_frame_with_overlap), dtype=np.float16)
+        # Initialize output array
+        target_h, target_w = target_mel_size
+        result = np.zeros((clip_len, target_h, target_w), dtype=np.float16)
 
-        for i in range(clip_len):
-            frame_idx = start_frame + i
+        for frame_idx in range(clip_len):
             # Calculate time for this frame
-            frame_time = frame_idx / fps
-            # Map to mel spectrogram indices
-            mel_start = int(np.floor(frame_time * mel_per_second))
+            video_frame_idx = start_frame + frame_idx
+            time_seconds = video_frame_idx / fps
             
-            # Add overlap by extending the window backwards and forwards
-            mel_start_with_overlap = mel_start - overlap_frames
-            mel_end_with_overlap = mel_start + mel_frames_per_frame + overlap_frames
+            # Find corresponding mel frame indices
+            mel_center = int(np.floor(time_seconds * mel_per_second))
+            mel_start = mel_center - overlap
+            mel_end = mel_center + mel_frames_per_video_frame + overlap
 
-            # Ensure bounds
-            mel_start_with_overlap = max(0, mel_start_with_overlap)
-            mel_end_with_overlap = min(audio_mel_full.shape[1], mel_end_with_overlap)
+            # Clamp to valid range
+            mel_start = max(0, mel_start)
+            mel_end = min(audio_mel_full.shape[1], mel_end)
 
-            if mel_end_with_overlap > mel_start_with_overlap:
-                # Extract mel spectrogram for this frame with overlap
-                mel_frame = audio_mel_full[:, mel_start_with_overlap:mel_end_with_overlap]
+            if mel_end > mel_start:
+                # Extract mel spectrogram slice
+                mel_slice = audio_mel_full[:, mel_start:mel_end]
                 
-                # Pad or truncate to ensure consistent shape
-                if mel_frame.shape[1] < mel_frames_per_frame_with_overlap:
+                # Ensure consistent width by padding or truncating
+                if mel_slice.shape[1] < total_mel_frames:
                     # Pad with zeros
-                    pad_width = mel_frames_per_frame_with_overlap - mel_frame.shape[1]
-                    mel_frame = np.pad(mel_frame, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
-                elif mel_frame.shape[1] > mel_frames_per_frame_with_overlap:
+                    pad_width = total_mel_frames - mel_slice.shape[1]
+                    mel_slice = np.pad(mel_slice, ((0, 0), (0, pad_width)), mode='constant')
+                elif mel_slice.shape[1] > total_mel_frames:
                     # Truncate
-                    mel_frame = mel_frame[:, :mel_frames_per_frame_with_overlap]
+                    mel_slice = mel_slice[:, :total_mel_frames]
 
-                mel_frames[i] = mel_frame.astype(np.float16)
+                # Resize to target size
+                result[frame_idx] = DataPreprocessor._resize_mel_spectrogram(mel_slice, target_h, target_w)
 
-        return mel_frames
+        return result
+
+    @staticmethod
+    def _resize_mel_spectrogram(mel_data: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        """Resize mel spectrogram to target dimensions while preserving data range."""
+        mel_min = mel_data.min()
+        mel_max = mel_data.max()
+        mel_range = mel_max - mel_min
+        
+        if mel_range > 1e-8:  # Has variation
+            # Normalize to [0, 255], resize, then restore original scale
+            mel_uint8 = ((mel_data - mel_min) / mel_range * 255).astype(np.uint8)
+            mel_resized = cv2.resize(mel_uint8, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            mel_resized = mel_resized.astype(np.float32) / 255.0 * mel_range + mel_min
+        else:  # Constant values
+            mel_resized = np.full((target_h, target_w), mel_min, dtype=np.float32)
+        
+        return mel_resized.astype(np.float16)
 
     @staticmethod
     def save_dataset_statistics(stats: Dict[str, Any], output_dir: str):
@@ -221,7 +282,7 @@ class DataPreprocessor(ABC):
             n_fft = int(audio_cfg.get("n_fft", 2048))
             hop = int(audio_cfg.get("hop_length", 512))
             # Use librosa default upper frequency (Nyquist)
-            mel_db = self.extract_audio_mel(video_path, sr, n_mels, n_fft, hop)
+            mel_db = self.extract_audio_mel(video_path, sr, n_mels, n_fft, hop, self.augmentor)
             if mel_db is not None and mel_db.size > 0:
                 # Store as numpy float16 for compactness
                 result["audio_mel_full"] = mel_db.astype(np.float16)
@@ -282,6 +343,7 @@ class DataPreprocessor(ABC):
             image_codec=wds_cfg.get("image_codec", "webp"),
             image_quality=int(wds_cfg.get("image_quality", 90)),
             index_filename=wds_cfg.get("index_filename", "index.csv"),
+            overwrite=wds_cfg.get("overwrite", False),
         )
 
     def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
@@ -301,6 +363,10 @@ class DataPreprocessor(ABC):
         # Resize to target size
         target_size = self.config["preprocessing"]["image_processing"]["target_size"]
         face = cv2.resize(face, target_size)
+        
+        # Apply video augmentations
+        if self.augmentor and self.augmentor.is_enabled():
+            face = self.augmentor.augment_video_frame_rgb(face)
 
         # Keep as uint8 for compact storage; defer normalization to loader
         return face
@@ -336,13 +402,25 @@ class DataPreprocessor(ABC):
             meta["clip_start_frame"] = int(start)
             meta["clip_length"] = int(clip_len)
 
+            # Determine the effective start frame for audio extraction, considering A/V desync
+            audio_start_frame_for_mel_extraction = start
+            if self.augmentor and self.augmentor.is_enabled():
+                desync_sec = self.augmentor.get_av_desync_offset()
+                if abs(desync_sec) > 1e-6:
+                    shift_frames = int(desync_sec * fps)
+                    audio_start_frame_for_mel_extraction = start + shift_frames
+                    # Clamp audio_start_frame to valid range relative to video frames
+                    audio_start_frame_for_mel_extraction = max(0, min(audio_start_frame_for_mel_extraction, t - 1))
+                    meta["av_desync_sec"] = desync_sec # Store desync amount in metadata
+
             # Extract frame-level mel spectrograms
             mel_frames: np.ndarray | None = None
             if audio_mel_full is not None and mel_per_second > 0 and fps > 0:
+                target_mel_size = tuple(audio_cfg.get("target_mel_size", [299, 299]))
                 mel_frames = self.extract_frame_level_mel(
-                    audio_mel_full, start, clip_len, fps, mel_per_second, overlap_ratio
+                    audio_mel_full, audio_start_frame_for_mel_extraction, clip_len, fps, mel_per_second, overlap_ratio, target_mel_size
                 )
-
+            
             self.shard_writer.add_sample(sample_id, clip, label, meta, mel_frames=mel_frames)
             start += clip_stride
         self.sample_index += 1

@@ -1,48 +1,82 @@
 data:
-  train_dir: "data/processed/train"
-  val_dir: "data/processed/val"
-  batch_size: 32
-  num_workers: 4
+  # Paths to shard datasets
+  shards_dir: "data/processed/FakeAVCeleb_v1.2/shards"
+  train_index: "index_train.csv"
+  val_index: "index_val.csv"
+  
+  # Data loading configuration
+  batch_size: 16  # Mini-batch size for training
+  num_workers: 1  # Number of data loading workers
   pin_memory: true
+  frames_per_clip: 32 # Number of frames to sample per video clip
+  
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  
+  # Optional: limit samples for debugging
+  max_train_samples: null  # Set to integer to limit training samples
+  max_val_samples: null    # Set to integer to limit validation samples
 
 model:
-  name: "efficientnet_b0"  # Options: "efficientnet_b0", "resnet50", "custom"
-  pretrained: true
+  # Model type - can be extended to support any BaseDetector subclass
+  name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
+  module_path: "src.models.xception"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
   num_classes: 2
-  dropout_rate: 0.2
+  # Encoder parameters
+  # encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Path to pre-trained encoder checkpoint
+  
+  # Model-specific parameters (passed to __init__ as kwargs)
+  model_params:
+    pos_freq: 0.72
+    # Encoder parameters
+    # embed_dim: 256          # Embedding dimension for encoders
+    # freeze_encoders: false  # Freeze encoders during training
 
 training:
   epochs: 100
+  grad_clip: 1.0
+  
   early_stopping:
     patience: 10
     min_delta: 0.001
+  
   optimizer:
-    name: "adam"  # Options: "adam", "sgd"
+    name: "adam"
     learning_rate: 0.001
     weight_decay: 0.0001
-    momentum: 0.9  # For SGD
+  
   scheduler:
-    name: "cosine"  # Options: "cosine", "step", "plateau"
-    warmup_epochs: 5
+    name: "cosine"
     min_lr: 0.00001
 
 loss:
-  name: "cross_entropy"  # Options: "cross_entropy", "focal"
-  focal_gamma: 2.0  # For focal loss
+  name: "focal"
+  focal_gamma: 3.0
 
 logging:
   log_dir: "logs"
-  tensorboard: true
-  save_frequency: 5  # Save checkpoint every N epochs
-  metrics:
-    - "accuracy"
-    - "precision"
-    - "recall"
-    - "f1_score"
-    - "auc_roc"
+  wandb:
+    project: "dfd-lab"
+    offline: false
 
+# Optional checkpoint loading
 checkpointing:
-  dir: "checkpoints"
-  save_best_only: true
-  monitor: "val_f1_score"
-  mode: "max" 
+  enabled: false
+  dir: "checkpoints-finetune"
+  monitor: "val_loss"
+  mode: "min"
+  resume_from: "checkpoints/last.ckpt"
+
+# PyTorch Lightning Trainer specific flags
+trainer:
+  precision: "16-mixed" # Automatic Mixed Precision
+  log_every_n_steps: 10
+  accumulate_grad_batches: 16
+  fast_dev_run: false
+
+# Device configuration
+device: "cuda"  # Options: "cuda", "cpu", "cuda:0", "cuda:1", etc.
+
+# Seed for reproducibility
+seed: 42

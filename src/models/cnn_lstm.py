@@ -2,25 +2,52 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 from typing import Tuple, Optional
-from base import BaseDetector
+from src.models.base import BaseDetector
 
 
 class FeatureExtractor(nn.Module):
     """Wrapper around torchvision models to extract features (no classifier)."""
-    def __init__(self, backbone="resnet18", pretrained=True):
+    def __init__(self, backbone="resnet18", pretrained=True, in_channels=3):
         super().__init__()
         if backbone == "resnet18":
             model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
-            layers = list(model.children())[:-1]   # drop final FC, keep avgpool
-            self.backbone = nn.Sequential(*layers)
-            self.out_dim = model.fc.in_features    # feature size (512)
         elif backbone == "resnet50":
             model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None)
-            layers = list(model.children())[:-1]   # drop final FC, keep avgpool
-            self.backbone = nn.Sequential(*layers)
-            self.out_dim = model.fc.in_features    # feature size (2048)
         else:
             raise ValueError(f"Unsupported backbone: {backbone}")
+
+        # Handle input channels if not 3 (standard ImageNet)
+        if in_channels != 3:
+            # Get original layer
+            original_conv = model.conv1
+            
+            # Create new layer with desired input channels
+            new_conv = nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=original_conv.out_channels,
+                kernel_size=original_conv.kernel_size,
+                stride=original_conv.stride,
+                padding=original_conv.padding,
+                bias=original_conv.bias is not None
+            )
+            
+            # Initialize weights
+            if pretrained:
+                with torch.no_grad():
+                    # Sum weights across channel dimension to preserve activation magnitude roughly
+                    # Original: (Out, 3, K, K) -> Sum: (Out, 1, K, K) -> Expand if needed or just use
+                    # For 1 channel, we can just sum. For N channels, it's more complex, but here we likely need 1.
+                    if in_channels == 1:
+                        new_conv.weight.data = original_conv.weight.data.sum(dim=1, keepdim=True)
+                    else:
+                        # Simple initialization for other cases
+                        nn.init.kaiming_normal_(new_conv.weight, mode='fan_out', nonlinearity='relu')
+            
+            model.conv1 = new_conv
+
+        layers = list(model.children())[:-1]   # drop final FC, keep avgpool
+        self.backbone = nn.Sequential(*layers)
+        self.out_dim = model.fc.in_features    # feature size
 
     def forward(self, x):
         # x: (B, C, H, W)
@@ -30,12 +57,12 @@ class FeatureExtractor(nn.Module):
 
 
 class CNNLSTMDetector(BaseDetector):
-    def __init__(self, hidden_size=512, num_classes=2, backbone_video="resnet18", backbone_audio="resnet18"):
+    def __init__(self, hidden_size=512, num_classes=2, backbone_video="resnet18", backbone_audio="resnet18", pos_freq=None):
         super().__init__(num_classes)
         
         # Use torchvision CNNs for both modalities
-        self.video_cnn = FeatureExtractor(backbone=backbone_video, pretrained=True)
-        self.audio_cnn = FeatureExtractor(backbone=backbone_audio, pretrained=True)
+        self.video_cnn = FeatureExtractor(backbone=backbone_video, pretrained=True, in_channels=3)
+        self.audio_cnn = FeatureExtractor(backbone=backbone_audio, pretrained=True, in_channels=1)
 
         fused_dim = self.video_cnn.out_dim + self.audio_cnn.out_dim
 
@@ -46,6 +73,21 @@ class CNNLSTMDetector(BaseDetector):
         )
 
         self.fc = nn.Linear(hidden_size, num_classes)
+        
+        # Bias Initialization for Imbalanced Classes
+        if pos_freq is not None and num_classes == 2:
+            import math
+            # Assume class 1 is positive (Fake) and class 0 is negative (Real)
+            # b1 - b0 = log(pi / (1 - pi))
+            # We set b0 = 0, b1 = log(pos_freq / (1 - pos_freq))
+            # Or symmetric: b1 = log(pi/(1-pi))/2, b0 = -b1
+            
+            bias_val = math.log(pos_freq / (1.0 - pos_freq))
+            # Set bias for class 1
+            with torch.no_grad():
+                self.fc.bias[1] = bias_val / 2
+                self.fc.bias[0] = -bias_val / 2
+            print(f"Initialized output bias for pos_freq={pos_freq:.2f}: {self.fc.bias.data}")
 
     def forward(self, image_input: torch.Tensor, audio_input: torch.Tensor) -> torch.Tensor:
         B, T, C_vid, H, W = image_input.shape

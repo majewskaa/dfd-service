@@ -1,8 +1,10 @@
+import os
 import argparse
 
 import yaml
 
 from src.data.fakeavceleb_preprocessor import FakeAVCelebPreprocessor
+from src.data.deepfake_eval_2024_preprocessor import DeepfakeEval2024Preprocessor
 
 
 def parse_args():
@@ -11,7 +13,7 @@ def parse_args():
         "--dataset",
         type=str,
         default="fakeavceleb",
-        choices=["fakeavceleb"],
+        choices=["fakeavceleb", "deepfake_eval_2024", "pretrain"],
         help="Dataset to preprocess"
     )
     return parser.parse_args()
@@ -31,6 +33,11 @@ def main():
     # Create preprocessor based on dataset
     if args.dataset == "fakeavceleb":
         preprocessor = FakeAVCelebPreprocessor(config)
+    elif args.dataset == "deepfake_eval_2024":
+        preprocessor = DeepfakeEval2024Preprocessor(config)
+    elif args.dataset == "pretrain":
+        from src.data.pretrain_preprocessor import PretrainPreprocessor
+        preprocessor = PretrainPreprocessor(config)
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 

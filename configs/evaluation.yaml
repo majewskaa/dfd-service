@@ -1,38 +1,35 @@
 data:
-  test_dir: "data/processed/test"
-  batch_size: 32
-  num_workers: 4
+  # Paths to shard datasets
+  shards_dir: "data/processed/FakeAVCeleb_v1.2/shards"
+  test_index: "index_val.csv"
+  
+  # Data loading configuration
+  batch_size: 8
+  num_workers: 1
   pin_memory: true
+  frames_per_clip: 32
 
 model:
-  checkpoint_path: "checkpoints/best_model.pth"
-  device: "cuda"  # Options: "cuda", "cpu"
+  # Model type
+  name: "XceptionMaxFusionDetector"
+  module_path: "src.models.xception"
+  num_classes: 2
+  model_params:
+    # embed_dim: 256
+    # freeze_encoders: true
 
 evaluation:
+  checkpoint_path: "checkpoints/last.ckpt"
+  device: "cuda"  # Options: "cuda", "cpu", "auto"
+  limit_batches: null # Set to integer for debugging
+
   metrics:
     - "accuracy"
-    - "precision"
-    - "recall"
     - "f1_score"
     - "auc_roc"
     - "confusion_matrix"
   
-  visualization:
-    enabled: true
-    num_samples: 10
-    save_dir: "evaluation_results"
-    plot_types:
-      - "confusion_matrix"
-      - "roc_curve"
-      - "precision_recall_curve"
-      - "error_analysis"
+  output_dir: "evaluation_results"
 
-  error_analysis:
-    enabled: true
-    save_misclassified: true
-    confidence_threshold: 0.8
-
-output:
-  format: "json"
-  save_dir: "evaluation_results"
-  detailed_report: true 
+loss:
+  name: "cross_entropy"
