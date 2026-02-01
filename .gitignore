@@ -185,3 +185,4 @@ data/processed/
 /checkpoints/
 *.pth
 metrics.json
+*.ckpt
