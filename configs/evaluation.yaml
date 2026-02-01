@@ -29,7 +29,7 @@ evaluation:
     - "auc_roc"
     - "confusion_matrix"
   
-  output_dir: "evaluation_results_snr10"
+  output_dir: "evaluation_results"
 
 loss:
   name: "cross_entropy"

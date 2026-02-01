@@ -6,7 +6,7 @@ data:
   random_seed: 42
 
 debug:
-  limit_per_category: 50  # Set to null or -1 to disable
+  limit_per_category: null  # Set to null or -1 to disable
 
 augmentations:
   enabled: false
@@ -39,7 +39,7 @@ preprocessing:
     margin: 0.2  # Margin around detected face as percentage of face size
 
   image_processing:
-    target_size: [ 299, 299 ]  # 299 x 299 for exception
+    target_size: [ 299, 299 ]  # 299 x 299 for xception
     normalization:
       mean: [ 0.485, 0.456, 0.406 ]  # ImageNet mean
       std: [ 0.229, 0.224, 0.225 ]   # ImageNet std

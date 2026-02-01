@@ -23,11 +23,13 @@ model:
   name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
   module_path: "src.models.xception"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
   num_classes: 2
+  # Encoder parameters
   # encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Path to pre-trained encoder checkpoint
   
   # Model-specific parameters (passed to __init__ as kwargs)
   model_params:
     pos_freq: 0.72
+    # Encoder parameters
     # embed_dim: 256          # Embedding dimension for encoders
     # freeze_encoders: false  # Freeze encoders during training
 
@@ -37,16 +39,16 @@ training:
   
   early_stopping:
     patience: 10
-    min_delta: 0.0001
+    min_delta: 0.001
   
   optimizer:
     name: "adam"
-    learning_rate: 0.00005
+    learning_rate: 0.001
     weight_decay: 0.0001
   
   scheduler:
     name: "cosine"
-    min_lr: 0.000001
+    min_lr: 0.00001
 
 loss:
   name: "focal"
@@ -58,12 +60,13 @@ logging:
     project: "dfd-lab"
     offline: false
 
+# Optional checkpoint loading
 checkpointing:
-  enabled: true
-  dir: "checkpoints-snr10-finetune"
+  enabled: false
+  dir: "checkpoints-finetune"
   monitor: "val_loss"
   mode: "min"
-  resume_from: "checkpoints-base/last.ckpt"
+  resume_from: "checkpoints/last.ckpt"
 
 # PyTorch Lightning Trainer specific flags
 trainer:
