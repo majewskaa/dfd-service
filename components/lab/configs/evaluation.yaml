@@ -1,0 +1,35 @@
+data:
+  # Paths to shard datasets
+  shards_dir: "data/processed/FakeAVCeleb_v1.2/shards"
+  test_index: "index_val.csv"
+  
+  # Data loading configuration
+  batch_size: 8
+  num_workers: 1
+  pin_memory: true
+  frames_per_clip: 32
+
+model:
+  # Model type
+  name: "XceptionMaxFusionDetector"
+  module_path: "src.models.xception"
+  num_classes: 2
+  model_params:
+    # embed_dim: 256
+    # freeze_encoders: true
+
+evaluation:
+  checkpoint_path: "checkpoints/last.ckpt"
+  device: "cuda"  # Options: "cuda", "cpu", "auto"
+  limit_batches: null # Set to integer for debugging
+
+  metrics:
+    - "accuracy"
+    - "f1_score"
+    - "auc_roc"
+    - "confusion_matrix"
+  
+  output_dir: "evaluation_results"
+
+loss:
+  name: "cross_entropy"

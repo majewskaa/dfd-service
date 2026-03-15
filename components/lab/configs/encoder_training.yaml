@@ -1,0 +1,56 @@
+data:
+  # Paths to shard datasets
+  shards_dir: "data/processed/pretrain/shards"
+  train_index: "index.csv"
+  val_index: "index.csv"
+  
+  # Data loading configuration
+  batch_size: 62  # Mini-batch size for training
+  num_workers: 0  # Number of data loading workers (0 for IterableDataset)
+  pin_memory: true
+  
+  # Optional: limit samples for debugging
+  max_train_samples: null  # Set to integer to limit training samples
+  max_val_samples: null    # Set to integer to limit validation samples
+
+model:
+  # EncoderPretrain model parameters
+  embed_dim: 256              # Embedding dimension for tokens
+  video_in_channels: 3        # Number of video channels (RGB)
+  audio_in_channels: 1        # Number of audio channels
+  video_patch: [2, 16, 16]    # Video patch size [T, H, W]
+  audio_patch: [16, 16]       # Audio patch size [H, W]
+  num_slices: 8               # Number of temporal slices
+  encoder_layers: 2           # Number of transformer encoder layers
+
+training:
+  epochs: 100
+  generator_lr: 1e-4          # Learning rate for generator (encoders, decoders, mappers)
+  discriminator_lr: 1e-4      # Learning rate for discriminators
+  n_critic: 5                 # Number of discriminator updates per generator update
+  
+  early_stopping:
+    patience: 15
+    min_delta: 0.001
+
+logging:
+  log_dir: "logs/encoder_training"
+  save_frequency: 10  # Save checkpoint every N epochs
+  metrics:
+    - "generator_loss"
+    - "discriminator_loss"
+    - "reconstruction_loss"
+    - "contrastive_loss"
+    - "adversarial_loss"
+
+checkpointing:
+  dir: "checkpoints/encoder"
+  save_best_only: false  # If false, saves checkpoints every save_frequency epochs
+  monitor: "train/loss_g"  # Metric to monitor for best model
+  mode: "min"  # "max" or "min" (min for losses)
+
+# Device configuration
+device: "cuda"  # Options: "cuda", "cpu", "cuda:0", "cuda:1", etc.
+
+# Seed for reproducibility
+seed: 42

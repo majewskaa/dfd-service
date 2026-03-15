@@ -1,0 +1,38 @@
+model:
+  name: "XceptionMaxFusionDetector"
+  module_path: "src.models.xception"
+  num_classes: 2
+  model_params:
+    pretrained: false
+
+evaluation:
+  checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/xception-trained/last.ckpt"
+  device: "cpu"  # Options: "cuda", "cpu", "auto"
+
+data:
+  frames_per_clip: 32
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+loss:
+  name: "cross_entropy"
+
+preprocessing:
+  clip_stride: 32  # advance N frames between clips (equals frames_per_clip for non-overlapping)
+
+  face_detection:
+    min_face_size: 100
+    margin: 0.2
+
+  image_processing:
+    target_size: [299, 299]
+
+  audio_processing:
+    enabled: true
+    sample_rate: 16000
+    n_mels: 64
+    n_fft: 1024
+    hop_length: 256
+    mel_overlap_ratio: 0.1
+    target_mel_size: [299, 299]

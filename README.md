@@ -9,7 +9,7 @@ Simply run the following in root directory:
 
 1. Run a script
 ```bash
-uv run preprocess.py --dataset fakeavceleb
+uv run ./src/main/preprocess.py --dataset fakeavceleb
 ```
 
 2. Update projects environment
@@ -21,17 +21,22 @@ uv sync
 
 ### Data Preprocessing
 ```bash
-python preprocess.py --dataset fakeavceleb
+python ./src/main/preprocess.py --dataset fakeavceleb
 ```
 
 ### Training
 ```bash
-python train.py
+python ./src/main/train.py
 ```
 
 ### Evaluation
 ```bash
-python evaluate.py
+python ./src/main/evaluate.py
+```
+
+### Service
+```bash
+v run ./components/service/src/main/service.py --config ./components/service/configs/service.yaml
 ```
 
 ## Configuration
