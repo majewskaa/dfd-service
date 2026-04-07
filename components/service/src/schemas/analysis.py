@@ -13,3 +13,8 @@ class VideoTooLongError(BaseModel):
     message: str
     durationSeconds: float
     maxDurationSeconds: float
+
+
+class NoFaceDetectedError(BaseModel):
+    className: str = "NoFaceDetectedError"
+    message: str

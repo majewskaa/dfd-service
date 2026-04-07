@@ -24,8 +24,8 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from service.src.inference.video_analyzer import VideoAnalyzer
-from service.src.schemas.analysis import AnalysisSegment, VideoTooLongError
+from service.src.inference.video_analyzer import VideoAnalyzer, NoFaceDetected
+from service.src.schemas.analysis import AnalysisSegment, VideoTooLongError, NoFaceDetectedError
 from service.src.main.helpers.response_helper import get_video_duration
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parents[2] / "configs" / "service.yaml"
@@ -79,7 +79,10 @@ def healthcheck():
 @dfd_service.post(
     "/analyze",
     response_model=list[AnalysisSegment],
-    responses={413: {"model": VideoTooLongError}},
+    responses={
+        413: {"model": VideoTooLongError},
+        422: {"model": NoFaceDetectedError},
+    },
 )
 async def analyze_video(video: UploadFile = File(...)):
     if _analyzer is None:
@@ -96,17 +99,23 @@ async def analyze_video(video: UploadFile = File(...)):
         if _max_video_duration_seconds is not None:
             duration = get_video_duration(tmp_path)
             if duration > _max_video_duration_seconds:
-                raise HTTPException(
+                return JSONResponse(
                     status_code=413,
                     content=VideoTooLongError(
                         message=f"Video is too long ({duration:.1f}s). Maximum allowed duration is {_max_video_duration_seconds:.0f}s.",
                         durationSeconds=round(duration, 1),
                         maxDurationSeconds=_max_video_duration_seconds,
-                    ),
+                    ).model_dump(),
                 )
 
-        loop = asyncio.get_event_loop()
-        segments = await loop.run_in_executor(None, _analyzer.analyze, tmp_path)
+        try:
+            loop = asyncio.get_event_loop()
+            segments = await loop.run_in_executor(None, _analyzer.analyze, tmp_path)
+        except NoFaceDetected as exc:
+            return JSONResponse(
+                status_code=422,
+                content=NoFaceDetectedError(message=str(exc)).model_dump(),
+            )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

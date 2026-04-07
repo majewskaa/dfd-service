@@ -33,6 +33,10 @@ from src.training.lightning_module import DeepfakeTask  # noqa: E402
 
 from service.src.schemas.analysis import AnalysisSegment  # noqa: E402
 
+
+class NoFaceDetected(Exception):
+    pass
+
 # Number of keyframes sampled to find a representative face bounding box.
 _FACE_DETECTION_KEYFRAMES = 10
 # Maximum clips to score in a single forward pass.
@@ -86,50 +90,79 @@ class VideoAnalyzer:
         t0 = time.perf_counter()
         log.info("[analyze] start  file=%s", video_path)
 
+        fps, cropped = self._prepare_video_frames(video_path, t0)
+        audio_mel = self._prepare_audio(video_path, t0)
+        starts = self._compute_clip_starts(len(cropped))
+        segments = self._score_clips(cropped, audio_mel, starts, fps, t0)
+
+        log.info("[analyze] done  segments=%d  total=%.1fs",
+                 len(segments), time.perf_counter() - t0)
+        return segments
+
+    def _prepare_video_frames(
+        self, video_path: str, t0: float
+    ) -> Tuple[float, List[np.ndarray]]:
+        """Decode frames, detect the face region, and return (fps, cropped_frames)."""
         fps = self._get_fps(video_path)
 
         log.info("[analyze] decoding frames …")
         frames = self._extract_frames(video_path)
         if not frames:
             log.warning("[analyze] no frames decoded — returning empty")
-            return []
+            return fps, []
         log.info("[analyze] decoded %d frames at %.1f fps  (%.1fs)",
                  len(frames), fps, time.perf_counter() - t0)
 
         log.info("[analyze] detecting face box from keyframes …")
         face_box = self._detect_face_box(frames)
         if face_box is None:
-            log.warning("[analyze] no face detected — returning empty")
-            return []
+            log.warning("[analyze] no face detected in video")
+            raise NoFaceDetected("No face detected in the video.")
         log.info("[analyze] face box %s  (%.1fs)", face_box, time.perf_counter() - t0)
 
         log.info("[analyze] cropping & resizing all frames …")
         cropped = [_crop_and_resize(f, face_box, self._target_size) for f in frames]
+        return fps, cropped
 
+    def _prepare_audio(self, video_path: str, t0: float) -> Optional[np.ndarray]:
+        """Extract the full mel spectrogram from the video's audio track."""
         log.info("[analyze] extracting audio mel spectrogram …")
-        audio_mel_full = self._extract_audio_mel(video_path)
-        if audio_mel_full is None:
+        audio_mel = self._extract_audio_mel(video_path)
+        if audio_mel is None:
             log.warning("[analyze] audio extraction failed — returning empty")
-            return []
+            return None
         log.info("[analyze] audio mel shape=%s  (%.1fs)",
-                 audio_mel_full.shape, time.perf_counter() - t0)
+                 audio_mel.shape, time.perf_counter() - t0)
+        return audio_mel
 
-        data_cfg = self._config["data"]
-        frames_per_clip: int = data_cfg.get("frames_per_clip", 32)
+    def _compute_clip_starts(self, total_frames: int) -> List[int]:
+        """Return the list of clip start frame indices based on config."""
+        frames_per_clip: int = self._config["data"].get("frames_per_clip", 32)
         clip_stride: int = self._prep.get("clip_stride", frames_per_clip)
+        starts = list(range(0, total_frames - frames_per_clip + 1, clip_stride))
+        if not starts:
+            log.warning("[analyze] video too short for even one clip — returning empty")
+        return starts
 
+    def _score_clips(
+        self,
+        cropped: List[np.ndarray],
+        audio_mel: Optional[np.ndarray],
+        starts: List[int],
+        fps: float,
+        t0: float,
+    ) -> List[AnalysisSegment]:
+        """Run batched inference over all clips and return scored segments."""
+        if not starts or audio_mel is None:
+            return []
+
+        frames_per_clip: int = self._config["data"].get("frames_per_clip", 32)
         audio_cfg = self._prep.get("audio_processing", {})
         sr = int(audio_cfg.get("sample_rate", 16000))
         hop = int(audio_cfg.get("hop_length", 256))
         mel_per_second = sr / hop
         overlap_ratio = float(audio_cfg.get("mel_overlap_ratio", 0.1))
         target_mel_size: Tuple[int, int] = tuple(audio_cfg.get("target_mel_size", [299, 299]))
-
-        total_frames = len(cropped)
-        starts = list(range(0, total_frames - frames_per_clip + 1, clip_stride))
-        if not starts:
-            log.warning("[analyze] video too short for even one clip — returning empty")
-            return []
 
         n_clips = len(starts)
         n_batches = (n_clips + _INFERENCE_BATCH_SIZE - 1) // _INFERENCE_BATCH_SIZE
@@ -138,15 +171,18 @@ class VideoAnalyzer:
         segments: List[AnalysisSegment] = []
         for batch_idx, batch_starts in enumerate(_batched(starts, _INFERENCE_BATCH_SIZE)):
             log.debug("[analyze] batch %d/%d", batch_idx + 1, n_batches)
-            video_batch, audio_batch = [], []
-            for start in batch_starts:
-                clip = cropped[start : start + frames_per_clip]
-                video_batch.append(torch.from_numpy(np.stack(clip)))
-                mel = _extract_frame_level_mel(
-                    audio_mel_full, start, frames_per_clip,
+
+            video_batch = [
+                torch.from_numpy(np.stack(cropped[s : s + frames_per_clip]))
+                for s in batch_starts
+            ]
+            audio_batch = [
+                torch.from_numpy(_extract_frame_level_mel(
+                    audio_mel, s, frames_per_clip,
                     fps, mel_per_second, overlap_ratio, target_mel_size,
-                )
-                audio_batch.append(torch.from_numpy(mel).float())
+                )).float()
+                for s in batch_starts
+            ]
 
             batch = {
                 "video_frames": torch.stack(video_batch).to(self._device),
@@ -156,8 +192,7 @@ class VideoAnalyzer:
 
             with torch.no_grad():
                 video, audio, _ = self._task._prepare_batch(batch)
-                outputs = self._task(video, audio)
-                probs = torch.softmax(outputs, dim=1)
+                probs = torch.softmax(self._task(video, audio), dim=1)
 
             for i, start in enumerate(batch_starts):
                 segments.append(AnalysisSegment(**{
@@ -166,8 +201,6 @@ class VideoAnalyzer:
                     "deepfakeProbability": float(probs[i, 1].item()),
                 }))
 
-        log.info("[analyze] done  segments=%d  total=%.1fs",
-                 len(segments), time.perf_counter() - t0)
         return segments
 
     # ------------------------------------------------------------------
