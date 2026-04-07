@@ -113,23 +113,26 @@ class VideoAnalyzer:
         log.info("[analyze] decoded %d frames at %.1f fps  (%.1fs)",
                  len(frames), fps, time.perf_counter() - t0)
 
+        face_box = self._get_face_box(frames)
+        log.info("[analyze] cropping & resizing all frames …")
+        cropped = [_crop_and_resize(f, face_box, self._target_size) for f in frames]
+        return fps, cropped
+
+    def _get_face_box(self, frames: List[np.ndarray]) -> Tuple[int, int, int, int]:
         log.info("[analyze] detecting face box from keyframes …")
         face_box = self._detect_face_box(frames)
         if face_box is None:
             log.warning("[analyze] no face detected in video")
             raise NoFaceDetected("No face detected in the video.")
-        log.info("[analyze] face box %s  (%.1fs)", face_box, time.perf_counter() - t0)
-
-        log.info("[analyze] cropping & resizing all frames …")
-        cropped = [_crop_and_resize(f, face_box, self._target_size) for f in frames]
-        return fps, cropped
+        log.info("[analyze] face box: %s", face_box)
+        return face_box
 
     def _prepare_audio(self, video_path: str, t0: float) -> Optional[np.ndarray]:
         """Extract the full mel spectrogram from the video's audio track."""
         log.info("[analyze] extracting audio mel spectrogram …")
         audio_mel = self._extract_audio_mel(video_path)
         if audio_mel is None:
-            log.warning("[analyze] audio extraction failed — returning empty")
+            log.warning("[analyze] no audio found in video")
             return None
         log.info("[analyze] audio mel shape=%s  (%.1fs)",
                  audio_mel.shape, time.perf_counter() - t0)
@@ -152,8 +155,12 @@ class VideoAnalyzer:
         fps: float,
         t0: float,
     ) -> List[AnalysisSegment]:
-        """Run batched inference over all clips and return scored segments."""
-        if not starts or audio_mel is None:
+        """Run batched inference over all clips and return scored segments.
+
+        Either modality may be absent: audio_mel=None means video-only inference,
+        and an empty cropped list means audio-only inference.
+        """
+        if not starts:
             return []
 
         frames_per_clip: int = self._config["data"].get("frames_per_clip", 32)
@@ -164,31 +171,41 @@ class VideoAnalyzer:
         overlap_ratio = float(audio_cfg.get("mel_overlap_ratio", 0.1))
         target_mel_size: Tuple[int, int] = tuple(audio_cfg.get("target_mel_size", [299, 299]))
 
+        has_video = bool(cropped)
+        has_audio = audio_mel is not None
+        if not has_video and not has_audio:
+            return []
+
+        modalities = ("video" if has_video else "") + ("+" if has_video and has_audio else "") + ("audio" if has_audio else "")
         n_clips = len(starts)
         n_batches = (n_clips + _INFERENCE_BATCH_SIZE - 1) // _INFERENCE_BATCH_SIZE
-        log.info("[analyze] running inference: %d clips in %d batches …", n_clips, n_batches)
+        log.info("[analyze] running inference (%s): %d clips in %d batches …",
+                 modalities, n_clips, n_batches)
 
         segments: List[AnalysisSegment] = []
         for batch_idx, batch_starts in enumerate(_batched(starts, _INFERENCE_BATCH_SIZE)):
             log.debug("[analyze] batch %d/%d", batch_idx + 1, n_batches)
 
-            video_batch = [
-                torch.from_numpy(np.stack(cropped[s : s + frames_per_clip]))
-                for s in batch_starts
-            ]
-            audio_batch = [
-                torch.from_numpy(_extract_frame_level_mel(
-                    audio_mel, s, frames_per_clip,
-                    fps, mel_per_second, overlap_ratio, target_mel_size,
-                )).float()
-                for s in batch_starts
-            ]
-
-            batch = {
-                "video_frames": torch.stack(video_batch).to(self._device),
-                "audio_frames": torch.stack(audio_batch).to(self._device),
+            batch: dict = {
                 "label": torch.zeros(len(batch_starts), dtype=torch.long, device=self._device),
             }
+
+            if has_video:
+                video_batch = [
+                    torch.from_numpy(np.stack(cropped[s : s + frames_per_clip]))
+                    for s in batch_starts
+                ]
+                batch["video_frames"] = torch.stack(video_batch).to(self._device)
+
+            if has_audio:
+                audio_batch = [
+                    torch.from_numpy(_extract_frame_level_mel(
+                        audio_mel, s, frames_per_clip,
+                        fps, mel_per_second, overlap_ratio, target_mel_size,
+                    )).float()
+                    for s in batch_starts
+                ]
+                batch["audio_frames"] = torch.stack(audio_batch).to(self._device)
 
             with torch.no_grad():
                 video, audio, _ = self._task._prepare_batch(batch)
