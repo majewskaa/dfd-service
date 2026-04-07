@@ -37,3 +37,24 @@ preprocessing:
     hop_length: 256
     mel_overlap_ratio: 0.1
     target_mel_size: [299, 299]
+
+database:
+  # Path to the SQLite file.  Relative paths are resolved from the directory
+  # that contains this config file.
+  path: "data/dfd_service.db"
+
+auth:
+  # Change this to a strong random value before deploying.
+  jwt_secret: "change-me-in-production"
+  jwt_expire_minutes: 1440  # 24 h
+
+email:
+  enabled: false
+  # Fill in the SMTP details below when enabling.
+  # host: "smtp.example.com"
+  # port: 587
+  # username: "you@example.com"
+  # password: "secret"
+  # from_address: "noreply@example.com"
+  # use_tls: false
+  # start_tls: true
