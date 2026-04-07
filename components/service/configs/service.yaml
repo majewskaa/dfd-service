@@ -8,6 +8,7 @@ model:
 evaluation:
   checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/xception-trained/last.ckpt"
   device: "cpu"  # Options: "cuda", "cpu", "auto"
+  max_video_duration_seconds: 60
 
 data:
   frames_per_clip: 32

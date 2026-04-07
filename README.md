@@ -36,7 +36,7 @@ python ./src/main/evaluate.py
 
 ### Service
 ```bash
-v run ./components/service/src/main/service.py --config ./components/service/configs/service.yaml
+uv run ./components/service/src/main/service.py --config ./components/service/configs/service.yaml
 ```
 
 ## Configuration
