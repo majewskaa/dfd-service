@@ -24,9 +24,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from service.src.auth import jwt as jwt_utils
 from service.src.auth.router import router as auth_router
 from service.src.db.session import init_db
-from service.src.inference.video_analyzer import VideoAnalyzer
-from service.src.jobs import router as jobs_router
-from service.src.jobs import runner as job_runner
+from service.src.lab_service.video_analyzer import VideoAnalyzer
+from service.src.router import router as jobs_router
+from service.src.lab_service import video_analyzer_runner as job_runner
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parents[2] / "configs" / "service.yaml"
 _config_path: Path = Path(os.environ.get("DFD_CONFIG", str(_DEFAULT_CONFIG_PATH)))
@@ -39,7 +39,6 @@ async def lifespan(app: FastAPI):
     with open(_config_path) as f:
         config = yaml.safe_load(f)
 
-    # ── database ──────────────────────────────────────────────────────────────
     db_path_raw = config.get("database", {}).get("path", "data/dfd_service.db")
     db_path = Path(db_path_raw)
     if not db_path.is_absolute():

@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel, EmailStr
 from sqlmodel import Session, select
 
@@ -12,7 +12,6 @@ from service.src.db.models import Job, User
 from service.src.db.session import get_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -45,11 +44,11 @@ class UserResponse(BaseModel):
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _hash(password: str) -> str:
-    return _pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def _verify(plain: str, hashed: str) -> bool:
-    return _pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def get_current_user_id(

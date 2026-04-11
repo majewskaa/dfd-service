@@ -28,14 +28,11 @@ _LAB_SRC = str(Path(__file__).parents[3] / "lab")
 if _LAB_SRC not in sys.path:
     sys.path.insert(0, _LAB_SRC)
 
-from src.models.base import BaseDetector  # noqa: E402
-from src.training.lightning_module import DeepfakeTask  # noqa: E402
+from src.models.base import BaseDetector
+from src.training.lightning_module import DeepfakeTask
 
-from service.src.schemas.analysis import AnalysisSegment  # noqa: E402
-
-
-class NoFaceDetected(Exception):
-    pass
+from service.src.schemas.responses import AnalysisResponseSegment
+from service.src.lab_service.errors import NoFaceDetectedError
 
 # Number of keyframes sampled to find a representative face bounding box.
 _FACE_DETECTION_KEYFRAMES = 10
@@ -85,15 +82,16 @@ class VideoAnalyzer:
     # Public API
     # ------------------------------------------------------------------
 
-    def analyze(self, video_path: str) -> List[AnalysisSegment]:
+    def analyze(self, video_path: str) -> List[AnalysisResponseSegment]:
         """Score a video file and return per-clip deepfake probabilities."""
         t0 = time.perf_counter()
         log.info("[analyze] start  file=%s", video_path)
 
         fps, cropped = self._prepare_video_frames(video_path, t0)
         audio_mel = self._prepare_audio(video_path, t0)
-        starts = self._compute_clip_starts(len(cropped))
-        segments = self._score_clips(cropped, audio_mel, starts, fps, t0)
+        total_frames = len(cropped)
+        starts = self._compute_clip_starts(total_frames)
+        segments = self._score_clips(cropped, audio_mel, starts, fps, total_frames, t0)
 
         log.info("[analyze] done  segments=%d  total=%.1fs",
                  len(segments), time.perf_counter() - t0)
@@ -123,7 +121,7 @@ class VideoAnalyzer:
         face_box = self._detect_face_box(frames)
         if face_box is None:
             log.warning("[analyze] no face detected in video")
-            raise NoFaceDetected("No face detected in the video.")
+            raise NoFaceDetectedError()
         log.info("[analyze] face box: %s", face_box)
         return face_box
 
@@ -153,8 +151,9 @@ class VideoAnalyzer:
         audio_mel: Optional[np.ndarray],
         starts: List[int],
         fps: float,
+        total_frames: int,
         t0: float,
-    ) -> List[AnalysisSegment]:
+    ) -> List[AnalysisResponseSegment]:
         """Run batched inference over all clips and return scored segments.
 
         Either modality may be absent: audio_mel=None means video-only inference,
@@ -182,7 +181,7 @@ class VideoAnalyzer:
         log.info("[analyze] running inference (%s): %d clips in %d batches …",
                  modalities, n_clips, n_batches)
 
-        segments: List[AnalysisSegment] = []
+        segments: List[AnalysisResponseSegment] = []
         for batch_idx, batch_starts in enumerate(_batched(starts, _INFERENCE_BATCH_SIZE)):
             log.debug("[analyze] batch %d/%d", batch_idx + 1, n_batches)
 
@@ -212,11 +211,23 @@ class VideoAnalyzer:
                 probs = torch.softmax(self._task(video, audio), dim=1)
 
             for i, start in enumerate(batch_starts):
-                segments.append(AnalysisSegment(**{
+                segments.append(AnalysisResponseSegment(**{
                     "from": start / fps,
                     "to": (start + frames_per_clip) / fps,
                     "deepfakeProbability": float(probs[i, 1].item()),
                 }))
+
+        # Extend the last segment to the true end of the video so no frames
+        # are left uncovered when the tail doesn't fill a complete clip.
+        if segments and total_frames > 0:
+            last = segments[-1]
+            video_end = total_frames / fps
+            if video_end > last.to:
+                segments[-1] = AnalysisResponseSegment(**{
+                    "from": last.from_,
+                    "to": video_end,
+                    "deepfakeProbability": last.deepfake_probability,
+                })
 
         return segments
 

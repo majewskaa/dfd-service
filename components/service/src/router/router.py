@@ -8,21 +8,24 @@ Job endpoints:
 
 import asyncio
 import json
+import logging
 import tempfile
 import uuid
 from pathlib import Path
 from typing import List, Optional
 
+log = logging.getLogger(__name__)
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from service.src.auth.router import get_current_user_id, require_current_user_id
 from service.src.db.models import Job
 from service.src.db.session import get_session
-from service.src.jobs import runner as job_runner
-from service.src.schemas.analysis import AnalysisSegment, NoFaceDetectedError, VideoTooLongError
+from service.src.lab_service import video_analyzer_runner as job_runner
+from service.src.schemas.responses import AnalysisResponseSegment, NoFaceDetectedErrorResponse, VideoTooLongErrorResponse, JobCreatedResponse, JobStatusResponse
 from service.src.main.helpers.response_helper import get_video_duration
+from service.src.lab_service.errors import NoFaceDetectedError
 
 router = APIRouter(tags=["jobs"])
 
@@ -38,46 +41,34 @@ def configure(analyzer, max_duration: Optional[float], uploads_dir: str) -> None
     _max_video_duration_seconds = max_duration
     _uploads_dir = uploads_dir
 
-
-# ── schemas ───────────────────────────────────────────────────────────────────
-
-class JobCreatedResponse(BaseModel):
-    jobId: uuid.UUID
-    claimToken: str
-
-
-class JobStatusResponse(BaseModel):
-    jobId: uuid.UUID
-    status: str  # pending | running | done | failed
-    filename: Optional[str] = None
-    result: Optional[List[AnalysisSegment]] = None
-    error: Optional[str] = None
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
 def _job_to_response(job: Job) -> JobStatusResponse:
     result = None
     if job.result_json:
         raw = json.loads(job.result_json)
-        result = [AnalysisSegment(**s) for s in raw]
+        result = [AnalysisResponseSegment(**s) for s in raw]
+
+    error = None
+    if job.error:
+        try:
+            error = json.loads(job.error)
+        except (json.JSONDecodeError, ValueError):
+            error = {"className": "UnexpectedError", "message": job.error}
+
     return JobStatusResponse(
         jobId=job.id,
         status=job.status,
         filename=job.filename,
         result=result,
-        error=job.error,
+        error=error,
     )
-
-
-# ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post(
     "/analyze",
     response_model=JobCreatedResponse,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
-        413: {"model": VideoTooLongError},
+        413: {"model": VideoTooLongErrorResponse},
+        400: {"model": NoFaceDetectedErrorResponse},
         503: {"description": "Model not loaded"},
     },
 )
@@ -89,6 +80,7 @@ async def submit_analysis(
     if _analyzer is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
+    log.info("[analyze] user_id from token: %s", user_id)
     content = await video.read()
 
     Path(_uploads_dir).mkdir(parents=True, exist_ok=True)
@@ -102,18 +94,14 @@ async def submit_analysis(
             duration = get_video_duration(tmp_path)
             if duration > _max_video_duration_seconds:
                 Path(tmp_path).unlink(missing_ok=True)
-                from fastapi.responses import JSONResponse
-                return JSONResponse(
-                    status_code=413,
-                    content=VideoTooLongError(
-                        message=(
-                            f"Video is too long ({duration:.1f}s). "
-                            f"Maximum allowed duration is {_max_video_duration_seconds:.0f}s."
-                        ),
-                        durationSeconds=round(duration, 1),
-                        maxDurationSeconds=_max_video_duration_seconds,
-                    ).model_dump(),
-                )
+                raise HTTPException(status_code=413, detail=VideoTooLongErrorResponse(
+                    message=(
+                        f"Video is too long ({duration:.1f}s). "
+                        f"Maximum allowed duration is {_max_video_duration_seconds:.0f}s."
+                    ),
+                    durationSeconds=round(duration, 1),
+                    maxDurationSeconds=_max_video_duration_seconds,
+                ))
 
         job = Job(
             user_id=user_id,
@@ -125,12 +113,16 @@ async def submit_analysis(
         session.commit()
         session.refresh(job)
 
-        asyncio.create_task(
-            job_runner.run_analysis(job.id, tmp_path, _analyzer)
-        )
+        try:
+            asyncio.create_task(
+                job_runner.run_analysis(job.id, tmp_path, _analyzer)
+            )
+        except NoFaceDetectedError as e:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=NoFaceDetectedErrorResponse(message=e.message))
     except Exception:
         Path(tmp_path).unlink(missing_ok=True)
-        raise
+        raise 
 
     return JobCreatedResponse(jobId=job.id, claimToken=job.claim_token)
 

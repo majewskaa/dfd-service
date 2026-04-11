@@ -18,9 +18,10 @@ from sqlmodel import Session, select
 
 from service.src.db.models import Job, User
 from service.src.db.session import get_engine
+from service.src.lab_service.errors import NoFaceDetectedError
 
 if TYPE_CHECKING:
-    from service.src.inference.video_analyzer import VideoAnalyzer
+    from service.src.lab_service.video_analyzer import VideoAnalyzer
 
 log = logging.getLogger(__name__)
 
@@ -55,9 +56,19 @@ async def run_analysis(
         _update_job(job_id, status="done", result_json=result)
         log.info("[runner] job=%s done  segments=%d", job_id, len(segments))
         await _maybe_notify(job_id)
+    except NoFaceDetectedError as exc:
+        log.warning("[runner] job=%s no face detected", job_id)
+        error_json = json.dumps({
+            "className": "NoFaceDetectedErrorResponse",
+            "message": str(exc),
+        })
+        _update_job(job_id, status="failed", error=error_json)
     except Exception as exc:
         log.exception("[runner] job=%s failed", job_id)
-        _update_job(job_id, status="failed", error=str(exc))
+        _update_job(job_id, status="failed", error=json.dumps({
+            "className": "UnexpectedError",
+            "message": str(exc),
+        }))
     finally:
         Path(video_path).unlink(missing_ok=True)
 
