@@ -10,6 +10,10 @@ elif _COMPONENTS_DIR not in sys.path:
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path as _Path
+
+from dotenv import load_dotenv
+load_dotenv(_Path(__file__).parents[4] / ".env")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,10 +26,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from service.src.auth import jwt as jwt_utils
-from service.src.auth.router import router as auth_router
 from service.src.db.session import init_db
 from service.src.lab_service.video_analyzer import VideoAnalyzer
-from service.src.router import router as jobs_router
+from service.src.router import router as api_router
 from service.src.lab_service import video_analyzer_runner as job_runner
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parents[2] / "configs" / "service.yaml"
@@ -39,12 +42,21 @@ async def lifespan(app: FastAPI):
     with open(_config_path) as f:
         config = yaml.safe_load(f)
 
-    db_path_raw = config.get("database", {}).get("path", "data/dfd_service.db")
-    db_path = Path(db_path_raw)
-    if not db_path.is_absolute():
-        db_path = (_config_path.parent / db_path).resolve()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_db(f"sqlite:///{db_path}")
+    uploads_base = (_config_path.parent / "data").resolve()
+
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        log.info("Using database from DATABASE_URL env var")
+    else:
+        db_path_raw = config.get("database", {}).get("path", "data/dfd_service.db")
+        db_path = Path(db_path_raw)
+        if not db_path.is_absolute():
+            db_path = (_config_path.parent / db_path).resolve()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        uploads_base = db_path.parent
+        database_url = f"sqlite:///{db_path}"
+        log.info("Using local SQLite database at %s", db_path)
+    init_db(database_url)
 
     # ── auth ──────────────────────────────────────────────────────────────────
     auth_cfg = config.get("auth", {})
@@ -54,7 +66,11 @@ async def lifespan(app: FastAPI):
     )
 
     # ── email ─────────────────────────────────────────────────────────────────
-    job_runner.configure_smtp(config.get("email", {}))
+    email_cfg = dict(config.get("email", {}))
+    smtp_password = os.environ.get("SMTP_PASSWORD")
+    if smtp_password:
+        email_cfg["password"] = smtp_password
+    job_runner.configure_smtp(email_cfg)
 
     # ── model ─────────────────────────────────────────────────────────────────
     raw_checkpoint = config.get("evaluation", {}).get("checkpoint_path", "")
@@ -75,8 +91,8 @@ async def lifespan(app: FastAPI):
         log.warning("checkpoint not found at '%s' — /analyze will return 503.", checkpoint)
 
     # ── jobs router ───────────────────────────────────────────────────────────
-    uploads_dir = str(db_path.parent / "uploads")
-    jobs_router.configure(
+    uploads_dir = str(uploads_base / "uploads")
+    api_router.configure(
         analyzer=analyzer,
         max_duration=max_duration,
         uploads_dir=uploads_dir,
@@ -96,8 +112,7 @@ dfd_service.add_middleware(
     allow_headers=["*"],
 )
 
-dfd_service.include_router(auth_router)
-dfd_service.include_router(jobs_router.router)
+dfd_service.include_router(api_router.router)
 
 
 @dfd_service.get("/health")

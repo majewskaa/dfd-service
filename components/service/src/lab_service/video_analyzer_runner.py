@@ -96,19 +96,41 @@ async def _maybe_notify(job_id: uuid.UUID) -> None:
         if user is None or not user.notify_email:
             return
         email = user.email
+        filename = job.filename or "your video"
 
     try:
         import aiosmtplib
+        from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
 
         cfg = _smtp_config
-        msg = MIMEText(
-            f"Your deepfake analysis (job {job_id}) has finished. "
-            "Log in to review the results."
+        plain = (
+            f"Hi,\n\n"
+            f"The deepfake analysis of \"{filename}\" has finished.\n"
+            f"Log in to review the full results.\n\n"
+            f"— DFD Service"
         )
-        msg["Subject"] = "Your analysis is ready"
+        html = (
+            f"<p>Hi,</p>"
+            f"<p>The deepfake analysis of <strong>{filename}</strong> has finished.</p>"
+            f"<p>Log in to review the full results.</p>"
+            f"<p style='color:#888'>— DFD Service</p>"
+        )
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"Your analysis of \"{filename}\" is ready"
         msg["From"] = cfg["from_address"]
         msg["To"] = email
+        msg.attach(MIMEText(plain, "plain"))
+        msg.attach(MIMEText(html, "html"))
+
+        import ssl
+        tls_context = ssl.create_default_context()
+        try:
+            import certifi
+            tls_context.load_verify_locations(certifi.where())
+        except ImportError:
+            pass  # certifi not installed, use default context as-is
 
         await aiosmtplib.send(
             msg,
@@ -118,6 +140,7 @@ async def _maybe_notify(job_id: uuid.UUID) -> None:
             password=cfg.get("password"),
             use_tls=cfg.get("use_tls", False),
             start_tls=cfg.get("start_tls", True),
+            tls_context=tls_context,
         )
         log.info("[runner] notification sent to %s for job=%s", email, job_id)
     except Exception:

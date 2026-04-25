@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
 from typing import Any, List, Optional
 import uuid
+
+from pydantic import BaseModel, Field
 
 class AnalysisResponseSegment(BaseModel):
     from_: float = Field(..., alias="from")
@@ -35,5 +37,6 @@ class JobStatusResponse(BaseModel):
     jobId: uuid.UUID
     status: str  # pending | running | done | failed
     filename: Optional[str] = None
+    createdAt: Optional[datetime] = None
     result: Optional[List[AnalysisResponseSegment]] = None
     error: Optional[Any] = None  # structured dict with className + message, or None

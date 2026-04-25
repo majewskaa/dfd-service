@@ -7,7 +7,8 @@ _engine = None
 
 def init_db(db_url: str) -> None:
     global _engine
-    _engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
+    _engine = create_engine(db_url, connect_args=connect_args)
     SQLModel.metadata.create_all(_engine)
 
 

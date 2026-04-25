@@ -49,12 +49,11 @@ auth:
   jwt_expire_minutes: 1440  # 24 h
 
 email:
-  enabled: false
-  # Fill in the SMTP details below when enabling.
-  # host: "smtp.example.com"
-  # port: 587
-  # username: "you@example.com"
-  # password: "secret"
-  # from_address: "noreply@example.com"
-  # use_tls: false
-  # start_tls: true
+  enabled: true
+  host: "smtp.gmail.com"
+  port: 587
+  username: "amajewska4822@gmail.com"
+  password: ""   # set SMTP_PASSWORD in .env
+  from_address: "amajewska4822@gmail.com"
+  use_tls: false
+  start_tls: true
