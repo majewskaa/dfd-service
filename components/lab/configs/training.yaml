@@ -21,7 +21,7 @@ data:
 model:
   # Model type - can be extended to support any BaseDetector subclass
   name: "XceptionMaxFusionDetector"  # Options: "XceptionMaxFusionDetector", "CNNLSTMDetector", "AVClassifier" or any other detector in src/models
-  module_path: "src.models.xception"  # Python import path to model module: "xception", "cnn_lstm", "AVFF"
+  module_path: "src.models.xception"  # Python import path to model module: "xception", "cnn_lstm", "avff"
   num_classes: 2
   # Encoder parameters
   # encoder_checkpoint: "checkpoints/encoder/last-v1.ckpt"  # Path to pre-trained encoder checkpoint

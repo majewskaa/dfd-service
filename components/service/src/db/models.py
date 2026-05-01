@@ -34,3 +34,4 @@ class Job(SQLModel, table=True):
     # One-time token given to anonymous users so they can link the job to a
     # new account at registration time.
     claim_token: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True)
+    algorithm: str = Field(default="xception", index=True)

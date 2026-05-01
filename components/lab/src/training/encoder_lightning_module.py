@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 import torch
 from typing import Dict, Any, Tuple, Optional
 
-from src.models.AVFF_encoder import EncoderPretrain, compute_gradient_penalty
+from src.models.avff_encoder import EncoderPretrain, compute_gradient_penalty
 
 class EncoderPretrainTask(pl.LightningModule):
     def __init__(self, model: EncoderPretrain, config: Dict[str, Any]):

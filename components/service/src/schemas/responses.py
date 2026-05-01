@@ -36,6 +36,7 @@ class JobCreatedResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     jobId: uuid.UUID
     status: str  # pending | running | done | failed
+    algorithm: Optional[str] = None
     filename: Optional[str] = None
     createdAt: Optional[datetime] = None
     result: Optional[List[AnalysisResponseSegment]] = None

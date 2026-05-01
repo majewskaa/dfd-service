@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import bcrypt
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 from sqlmodel import Session, select
@@ -31,14 +31,14 @@ router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
 
 # Populated at startup via configure().
-_analyzer = None
+_analyzers: dict = {}
 _max_video_duration_seconds: Optional[float] = None
 _uploads_dir: str = tempfile.gettempdir()
 
 
-def configure(analyzer, max_duration: Optional[float], uploads_dir: str) -> None:
-    global _analyzer, _max_video_duration_seconds, _uploads_dir
-    _analyzer = analyzer
+def configure(analyzers: dict, max_duration: Optional[float], uploads_dir: str) -> None:
+    global _analyzers, _max_video_duration_seconds, _uploads_dir
+    _analyzers = analyzers
     _max_video_duration_seconds = max_duration
     _uploads_dir = uploads_dir
 
@@ -120,6 +120,7 @@ def _job_to_response(job: Job) -> JobStatusResponse:
     return JobStatusResponse(
         jobId=job.id,
         status=job.status,
+        algorithm=job.algorithm or "xception",
         filename=job.filename,
         createdAt=job.created_at,
         result=result,
@@ -209,18 +210,28 @@ def update_settings(
     tags=["jobs"],
     responses={
         413: {"model": VideoTooLongErrorResponse},
+        422: {"description": "Unknown algorithm"},
         503: {"description": "Model not loaded"},
     },
 )
 async def submit_analysis(
     video: UploadFile = File(...),
+    algorithm: str = Form(..., description="Detection algorithm to use. Available: xception, cnn_lstm, avff"),
     user_id: Optional[uuid.UUID] = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
-    if _analyzer is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+    available = list(_analyzers.keys()) or list(_max_durations.keys())
+    if algorithm not in available:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown algorithm '{algorithm}'. Available: {available}",
+        )
 
-    log.info("[analyze] user_id from token: %s", user_id)
+    analyzer = _analyzers.get(algorithm)
+    if analyzer is None:
+        raise HTTPException(status_code=503, detail=f"Model for algorithm '{algorithm}' is not loaded")
+
+    log.info("[analyze] user_id=%s algorithm=%s", user_id, algorithm)
     content = await video.read()
 
     Path(_uploads_dir).mkdir(parents=True, exist_ok=True)
@@ -243,12 +254,12 @@ async def submit_analysis(
                     ).model_dump(),
                 )
 
-        job = Job(user_id=user_id, filename=video.filename, upload_path=tmp_path, status="pending")
+        job = Job(user_id=user_id, filename=video.filename, upload_path=tmp_path, status="pending", algorithm=algorithm)
         session.add(job)
         session.commit()
         session.refresh(job)
 
-        asyncio.create_task(job_runner.run_analysis(job.id, tmp_path, _analyzer))
+        asyncio.create_task(job_runner.run_analysis(job.id, tmp_path, analyzer))
     except Exception:
         Path(tmp_path).unlink(missing_ok=True)
         raise

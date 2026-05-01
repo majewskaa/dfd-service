@@ -42,6 +42,9 @@ async def lifespan(app: FastAPI):
     with open(_config_path) as f:
         config = yaml.safe_load(f)
 
+    algorithm_configs: dict = config.pop("algorithms", {})
+    config.pop("default_algorithm", None)
+
     uploads_base = (_config_path.parent / "data").resolve()
 
     database_url = os.environ.get("DATABASE_URL")
@@ -72,28 +75,26 @@ async def lifespan(app: FastAPI):
         email_cfg["password"] = smtp_password
     job_runner.configure_smtp(email_cfg)
 
-    # ── model ─────────────────────────────────────────────────────────────────
-    raw_checkpoint = config.get("evaluation", {}).get("checkpoint_path", "")
-    checkpoint = Path(raw_checkpoint)
-    if not checkpoint.is_absolute():
-        checkpoint = (_config_path.parent / checkpoint).resolve()
-
+    # ── models — one VideoAnalyzer per algorithm, all must load ──────────────
     max_duration = config.get("evaluation", {}).get("max_video_duration_seconds")
-
-    analyzer = None
-    if checkpoint.exists():
-        try:
-            analyzer = VideoAnalyzer(config)
-            log.info("Model loaded from %s", checkpoint)
-        except Exception as exc:
-            log.warning("failed to load model — /analyze will return 503. Reason: %s", exc)
-    else:
-        log.warning("checkpoint not found at '%s' — /analyze will return 503.", checkpoint)
+    analyzers: dict = {}
+    for algo_name, algo_cfg in algorithm_configs.items():
+        merged = {**config, **algo_cfg}
+        raw_ckpt = merged.get("evaluation", {}).get("checkpoint_path", "")
+        ckpt = Path(raw_ckpt)
+        if not ckpt.is_absolute():
+            ckpt = (_config_path.parent / ckpt).resolve()
+        if not ckpt.exists():
+            raise FileNotFoundError(
+                f"algorithm '{algo_name}': checkpoint not found at '{ckpt}'"
+            )
+        analyzers[algo_name] = VideoAnalyzer(merged)
+        log.info("algorithm '%s': model loaded from %s", algo_name, ckpt)
 
     # ── jobs router ───────────────────────────────────────────────────────────
     uploads_dir = str(uploads_base / "uploads")
     api_router.configure(
-        analyzer=analyzer,
+        analyzers=analyzers,
         max_duration=max_duration,
         uploads_dir=uploads_dir,
     )

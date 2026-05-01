@@ -1,42 +1,102 @@
-model:
-  name: "XceptionMaxFusionDetector"
-  module_path: "src.models.xception"
-  num_classes: 2
-  model_params:
-    pretrained: false
-
 evaluation:
-  checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/xception-trained/last.ckpt"
   device: "cpu"  # Options: "cuda", "cpu", "auto"
   max_video_duration_seconds: 60
 
-data:
-  frames_per_clip: 32
-  normalization:
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
+algorithms:
 
-loss:
-  name: "cross_entropy"
+  xception:
+    model:
+      name: "XceptionMaxFusionDetector"
+      module_path: "src.models.xception"
+      num_classes: 2
+      model_params:
+        pretrained: false
+    evaluation:
+      checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/xception-trained/last.ckpt"
+    data:
+      frames_per_clip: 32
+      normalization:
+        mean: [0.485, 0.456, 0.406]
+        std: [0.229, 0.224, 0.225]
+    loss:
+      name: "cross_entropy"
+    preprocessing:
+      clip_stride: 32
+      face_detection:
+        min_face_size: 100
+        margin: 0.2
+      image_processing:
+        target_size: [299, 299]
+      audio_processing:
+        enabled: true
+        sample_rate: 16000
+        n_mels: 64
+        n_fft: 1024
+        hop_length: 256
+        mel_overlap_ratio: 0.1
+        target_mel_size: [299, 299]
 
-preprocessing:
-  clip_stride: 32  # advance N frames between clips (equals frames_per_clip for non-overlapping)
+  cnn_lstm:
+    model:
+      name: "CNNLSTMDetector"
+      module_path: "src.models.cnn_lstm"
+      num_classes: 2
+      model_params: {}
+    evaluation:
+      checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/cnn_lstm-trained/last.ckpt"
+    data:
+      frames_per_clip: 32
+      normalization:
+        mean: [0.485, 0.456, 0.406]
+        std: [0.229, 0.224, 0.225]
+    loss:
+      name: "cross_entropy"
+    preprocessing:
+      clip_stride: 32
+      face_detection:
+        min_face_size: 100
+        margin: 0.2
+      image_processing:
+        target_size: [224, 224]
+      audio_processing:
+        enabled: true
+        sample_rate: 16000
+        n_mels: 64
+        n_fft: 1024
+        hop_length: 256
+        mel_overlap_ratio: 0.1
+        target_mel_size: [224, 224]
 
-  face_detection:
-    min_face_size: 100
-    margin: 0.2
-
-  image_processing:
-    target_size: [299, 299]
-
-  audio_processing:
-    enabled: true
-    sample_rate: 16000
-    n_mels: 64
-    n_fft: 1024
-    hop_length: 256
-    mel_overlap_ratio: 0.1
-    target_mel_size: [299, 299]
+  avff:
+    model:
+      name: "AVClassifier"
+      module_path: "src.models.avff"
+      num_classes: 2
+      model_params: {}
+    evaluation:
+      checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/avff-trained/last.ckpt"
+    data:
+      frames_per_clip: 32
+      normalization:
+        mean: [0.485, 0.456, 0.406]
+        std: [0.229, 0.224, 0.225]
+    loss:
+      name: "cross_entropy"
+    preprocessing:
+      clip_stride: 32
+      face_detection:
+        min_face_size: 100
+        margin: 0.2
+      image_processing:
+        target_size: [224, 224]
+      audio_processing:
+        enabled: true
+        sample_rate: 16000
+        n_mels: 64
+        n_fft: 1024
+        hop_length: 256
+        mel_overlap_ratio: 0.1
+        target_mel_size: [224, 224]
 
 database:
   # Path to the SQLite file.  Relative paths are resolved from the directory

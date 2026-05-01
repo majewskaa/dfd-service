@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Training Script for AVFF Encoders (Pretraining)
+Training Script for avff Encoders (Pretraining)
 
 Usage:
     python train_encoders.py --config configs/encoder_training.yaml
@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 import torch
 
 from src.data.shard_dataset import ShardClipDataset
-from src.models.AVFF_encoder import EncoderPretrain
+from src.models.avff_encoder import EncoderPretrain
 from src.training.encoder_lightning_module import EncoderPretrainTask
 from src.callbacks.memory_monitor import CUDAMemoryMonitor
 
@@ -49,7 +49,7 @@ def create_data_loaders(config: Dict[str, Any]):
     shards_dir = data_config["shards_dir"]
     # frames_per_clip is implicit in video_patch[0] * num_slices usually, 
     # but ShardClipDataset needs it. 
-    # In AVFF_encoder, video_patch is (T_patch, H, W). 
+    # In avff_encoder, video_patch is (T_patch, H, W). 
     # Total frames = T_patch * num_slices? No, slice_pos_expand suggests num_slices is temporal.
     # Let's check how many frames we need.
     # The model takes (B, C, T, H, W).
