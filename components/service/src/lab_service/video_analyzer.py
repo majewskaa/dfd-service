@@ -3,11 +3,11 @@ Deepfake video analysis for the service endpoint.
 
 Replicates the preprocessing pipeline from components/lab so that raw MP4
 files can be scored without going through the offline shard-writing step.
-The model weights and configuration are loaded once at startup and reused
-for every request.
+VideoAnalyzer owns video decoding, face detection, and audio extraction.
+All model-specific logic (batch prep, forward pass, output interpretation)
+lives in a ModelBackend injected at construction time.
 """
 
-import importlib
 import logging
 import subprocess
 import sys
@@ -28,27 +28,32 @@ _LAB_SRC = str(Path(__file__).parents[3] / "lab")
 if _LAB_SRC not in sys.path:
     sys.path.insert(0, _LAB_SRC)
 
-from src.models.base import BaseDetector
-from src.training.lightning_module import DeepfakeTask
-
 from service.src.schemas.responses import AnalysisResponseSegment
 from service.src.lab_service.errors import NoFaceDetectedError
+from service.src.lab_service.model_backend import ModelBackend, DeepfakeTaskBackend
 
-# Number of keyframes sampled to find a representative face bounding box.
-_FACE_DETECTION_KEYFRAMES = 10
 # Maximum clips to score in a single forward pass.
 _INFERENCE_BATCH_SIZE = 8
 
 
 class VideoAnalyzer:
-    """Loads a trained deepfake-detection checkpoint and scores an MP4 file.
+    """Decodes a video, preprocesses it, and delegates scoring to a ModelBackend.
 
     The video is split into non-overlapping (or strided) clips of
     `frames_per_clip` frames.  Each clip is scored independently and the
     result is returned as a list of time-stamped AnalysisSegment objects.
+
+    Parameters
+    ----------
+    config:
+        Full service config dict.
+    backend:
+        Any object satisfying the ModelBackend protocol.  When omitted,
+        a DeepfakeTaskBackend is constructed from *config* automatically,
+        preserving the original single-argument behaviour.
     """
 
-    def __init__(self, config: dict) -> None:
+    def __init__(self, config: dict, backend: Optional[ModelBackend] = None) -> None:
         self._config = config
         self._prep = config.get("preprocessing", {})
 
@@ -66,17 +71,10 @@ class VideoAnalyzer:
         device_name = config["evaluation"].get("device", "cpu")
         self._device = torch.device("cpu" if device_name == "auto" else device_name)
 
-        log.info("Loading checkpoint: %s", config["evaluation"]["checkpoint_path"])
-        model = self._build_model()
-        self._task = DeepfakeTask.load_from_checkpoint(
-            config["evaluation"]["checkpoint_path"],
-            model=model,
-            config=config,
-            strict=False,
-        )
-        self._task.eval()
-        self._task.to(self._device)
-        log.info("Model ready on device: %s", self._device)
+        if backend is None:
+            backend = DeepfakeTaskBackend(config, self._device)
+        self._backend = backend
+        log.info("VideoAnalyzer ready (backend=%s)", type(backend).__name__)
 
     # ------------------------------------------------------------------
     # Public API
@@ -93,8 +91,16 @@ class VideoAnalyzer:
         starts = self._compute_clip_starts(total_frames)
         segments = self._score_clips(cropped, audio_mel, starts, fps, total_frames, t0)
 
-        log.info("[analyze] done  segments=%d  total=%.1fs",
-                 len(segments), time.perf_counter() - t0)
+        analysis_duration = time.perf_counter() - t0
+        video_length = total_frames / fps if fps > 0 else 0.0
+        log.info(
+            "[analyze] done  segments=%d  video_length=%.2fs  analysis_duration=%.2fs",
+            len(segments), video_length, analysis_duration,
+        )
+        print(
+            f"[analyze] video length: {video_length:.2f}s  |  "
+            f"analysis duration: {analysis_duration:.2f}s"
+        )
         return segments
 
     def _prepare_video_frames(
@@ -206,15 +212,13 @@ class VideoAnalyzer:
                 ]
                 batch["audio_frames"] = torch.stack(audio_batch).to(self._device)
 
-            with torch.no_grad():
-                video, audio, _ = self._task._prepare_batch(batch)
-                probs = torch.softmax(self._task(video, audio), dim=1)
+            batch_probs = self._backend.score_batch(batch)
 
             for i, start in enumerate(batch_starts):
                 segments.append(AnalysisResponseSegment(**{
                     "from": start / fps,
                     "to": (start + frames_per_clip) / fps,
-                    "deepfakeProbability": float(probs[i, 1].item()),
+                    "deepfakeProbability": batch_probs[i],
                 }))
 
         # Extend the last segment to the true end of the video so no frames
@@ -234,15 +238,6 @@ class VideoAnalyzer:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _build_model(self) -> BaseDetector:
-        model_cfg = self._config["model"]
-        module = importlib.import_module(model_cfg["module_path"])
-        ModelClass = getattr(module, model_cfg["name"])
-        return ModelClass(
-            num_classes=model_cfg["num_classes"],
-            **(model_cfg.get("model_params") or {}),
-        )
 
     def _get_fps(self, video_path: str) -> float:
         cap = cv2.VideoCapture(video_path)
@@ -265,18 +260,13 @@ class VideoAnalyzer:
     def _detect_face_box(
         self, frames: List[np.ndarray]
     ) -> Optional[Tuple[int, int, int, int]]:
-        """Run face detection on a small set of keyframes and return the
+        """Run face detection on all frames and return the
         median bounding box (x_min, y_min, x_max, y_max).
-
-        Sampling avoids running the expensive Haar cascade on every frame.
         """
-        n = len(frames)
-        keyframe_indices = np.linspace(0, n - 1, min(_FACE_DETECTION_KEYFRAMES, n), dtype=int)
-
         boxes = []
-        for idx in keyframe_indices:
+        for frame in frames:
             box = _find_face_box(
-                frames[idx], self._face_detector,
+                frame, self._face_detector,
                 self._min_face_size, self._face_margin,
             )
             if box is not None:

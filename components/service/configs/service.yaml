@@ -12,7 +12,7 @@ algorithms:
       model_params:
         pretrained: false
     evaluation:
-      checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/xception-trained/last.ckpt"
+      checkpoint_path: "/Users/amajewska/Development/self/inzynierka/dfd-service/components/lab/models/xception-trained/last.ckpt"
     data:
       frames_per_clip: 32
       normalization:
@@ -43,7 +43,7 @@ algorithms:
       num_classes: 2
       model_params: {}
     evaluation:
-      checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/cnn_lstm-trained/last.ckpt"
+      checkpoint_path: "/Users/amajewska/Development/self/inzynierka/dfd-service/components/lab/models/cnn_lstm-trained/last.ckpt"
     data:
       frames_per_clip: 32
       normalization:
@@ -74,7 +74,7 @@ algorithms:
       num_classes: 2
       model_params: {}
     evaluation:
-      checkpoint_path: "/Users/amajewska/Development/self/dfd-service/components/lab/models/avff-trained/last.ckpt"
+      checkpoint_path: "/Users/amajewska/Development/self/inzynierka/dfd-service/components/lab/models/avff-trained/last.ckpt"
     data:
       frames_per_clip: 32
       normalization:
